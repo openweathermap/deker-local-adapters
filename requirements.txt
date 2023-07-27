@@ -1,0 +1,9 @@
+# # public PYPI packages here
+numpy>=1.18
+h5py>=3.8.0
+hdf5plugin>=4.0.1
+
+
+# OWM packages under this index
+-i https://${OWM_GIT_TOKEN}:${OWM_GIT_TOKEN_PASS}@gitlab.openweathermap.org/api/v4/groups/713/-/packages/pypi/simple
+deker-tools>=0.0.7

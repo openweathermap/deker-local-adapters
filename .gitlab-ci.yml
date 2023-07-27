@@ -1,0 +1,115 @@
+### GENERAL ###
+
+stages:
+  - setup  # build initial environment for CI
+  - linters  # run all linters and checkers
+  - tests  # run all tests
+  - pypi gitlab  # build to OWM gitlab PyPI repository
+
+variables:
+  PYTHON_IMAGE: python:3.10-slim-buster  # your project python version
+  DOCKER_IMAGE: docker:20.10.23  # docker version for CI (do not upgrade to 23.x)
+  PYTHON_PACKAGE_NAME: deker_local_adapters  # your package name
+  DOCKER_REG_IMAGE: $CI_REGISTRY_IMAGE  # OWM gitlab docker repository
+  DOCKER_REPO_IMAGE: repo.owm.io/$CI_PROJECT_ROOT_NAMESPACE/$CI_PROJECT_NAME  # OWM standalone docker repository
+
+
+# CI SETUP ###
+
+setup: &base
+  stage: setup
+  image: $PYTHON_IMAGE
+  timeout: 1h
+  script:
+    - python --version
+    - pip --version
+    - export OWM_GIT_TOKEN=gitlab-ci-token
+    - export OWM_GIT_TOKEN_PASS=$CI_JOB_TOKEN
+    - pip install --upgrade pip
+    - pip install virtualenv
+    - virtualenv venv
+    - . venv/bin/activate
+    - pip install -r requirements.txt
+    - pip install -r lints.txt
+    - pip uninstall deker_local_adapters -y
+    - pip list
+  artifacts:
+    when: on_success
+    expire_in: 1 hour
+    paths:
+      - venv/
+  except:
+    - tags
+
+## CHECKS ###
+
+linters: &checks
+  <<: *base
+  stage: linters
+  retry: 2
+  before_script:
+    - . venv/bin/activate
+  script:
+    - isort ./$PYTHON_PACKAGE_NAME
+    - black ./$PYTHON_PACKAGE_NAME
+    - flake8 ./$PYTHON_PACKAGE_NAME
+    - mypy ./$PYTHON_PACKAGE_NAME --install-types --non-interactive --config-file pyproject.toml
+  artifacts:
+    when: on_failure
+    expire_in: 1 hour
+    paths:
+      - report.xml
+    reports:
+      junit: report.xml
+  except:
+    - tags
+
+shuffled tests:
+  <<: *checks
+  stage: tests
+  script:
+    - pytest --random-order --junitxml=tests.xml
+  artifacts:
+    when: always
+    expire_in: 1 hour
+    paths:
+      - tests.xml
+    reports:
+      junit:
+        - tests.xml
+  except:
+    - tags
+
+coverage:
+  <<: *checks
+  stage: tests
+  script:
+    - coverage run -m pytest --junitxml=report.xml
+    - coverage report
+    - coverage xml
+  coverage: '/(?i)total.*? (100(?:\.0+)?\%|[1-9]?\d(?:\.\d+)?\%)$/'
+  artifacts:
+    expire_in: 1 hour
+    when: always
+    paths:
+      - report.xml
+    reports:
+      junit:
+        - report.xml
+      coverage_report:
+        coverage_format: cobertura
+        path: coverage.xml
+  except:
+    - tags
+
+#### OWM PYPI ###
+
+push pypi tag:
+  image: $PYTHON_IMAGE
+  stage: pypi gitlab
+  script:
+    - pip install twine
+    - python setup.py sdist bdist_wheel
+    - TWINE_PASSWORD=$CI_JOB_TOKEN TWINE_USERNAME=gitlab-ci-token python -m twine upload --repository-url $CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/pypi dist/*
+  only:
+    - tags

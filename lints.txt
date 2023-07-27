@@ -1,0 +1,24 @@
+black
+coverage
+darglint
+flake8
+flake8-bugbear
+flake8-docstrings
+flake8-import-order
+flake8-pytest-style
+isort
+mypy
+mypy-extensions
+pep8-naming
+pre-commit
+pycln
+pytest
+pytest-asyncio
+pytest-cov
+# pytest-pythonpath  # requires 2.5.2 >= (pytest < 7); pytest >= 7 does not need this package
+pytest-random-order
+pytest-sugar
+ssort
+# OWM packages under this index
+-i https://${OWM_GIT_TOKEN}:${OWM_GIT_TOKEN_PASS}@gitlab.openweathermap.org/api/v4/groups/713/-/packages/pypi/simple
+deker==0.1.4
