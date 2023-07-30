@@ -18,7 +18,7 @@ def get_version() -> str:
     Regexp reference:
     https://gitlab.openweathermap.org/help/user/packages/pypi_repository/index.md#ensure-your-version-string-is-valid
     """
-    ci_commit_tag: Optional[str] = os.getenv("CI_COMMIT_TAG")
+    ci_commit_tag: Optional[str] = os.getenv("PACKAGE_VERSION", "0.0.0")
     regex = (
         r"(?:"
         r"(?:([0-9]+)!)?"
@@ -42,24 +42,47 @@ with open("requirements.txt", "r", encoding="utf-8") as f:
         if line.strip("\n") and not line.startswith(("#", "-i", "abstract"))
     ]
 
+with open('README.md') as f:
+    long_description = f.read()
+
+author = "OpenWeather"
+email = "info@openweathermap.org"
 
 setup_kwargs = dict(
     name=PACKAGE_NAME,
     version=get_version(),
-    author="{set author}",
-    author_email="{set author email}",
-    description="{provide description}",
+    author=author,
+    author_email=email,
+    maintainer=author,
+    maintainer_email=email,
+    description="adapters for Deker embedded databases management",
+    long_description=long_description,
+    long_description_content_type="text/markdown",
+    url="https://github.com/openweathermap/deker-local-adapters",
+    license="GPL-3.0-only",
+    license_files=["LICENSE"],
     packages=find_packages(exclude=["tests", "test*.*"]),
     package_data={PACKAGE_NAME: ["py.typed"]},
     include_package_data=True,
     platforms="any",
+    python_requires=">=3.9",
     classifiers=[
-        "License :: OSI Approved :: MIT License",
-        "Operating System :: OS Independent",
-        "Programming Language :: Python :: {set_version}",
-    ],
-    python_requires=">={set_version}",
-    install_requires=requirements,
+            "Development Status :: 4 - Beta",
+            "Intended Audience :: Developers",
+            "Intended Audience :: Information Technology",
+            "Intended Audience :: Science/Research",
+            "License :: OSI Approved :: GNU Lesser General Public License v3 (LGPLv3)",
+            "Topic :: Software Development :: Libraries :: Python Modules",
+            "Operating System :: Unix",
+            "Operating System :: POSIX :: Linux",
+            "Operating System :: MacOS :: MacOS X",
+            "Programming Language :: Python",
+            "Programming Language :: Python :: 3",
+            "Programming Language :: Python :: 3.9",
+            "Programming Language :: Python :: 3.10",
+            "Programming Language :: Python :: 3.11",
+            "Programming Language :: Python :: 3.12",
+        ],
+    install_requires=requirements
 )
-
 setup(**setup_kwargs)

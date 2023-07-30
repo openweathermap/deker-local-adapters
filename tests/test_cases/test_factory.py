@@ -48,7 +48,7 @@ class TestArraysAdaptersFactory:
         assert isinstance(adapter, LocalVArrayAdapter)
 
     def test_adapters_factory_create_varray_adapters(self, varray_collection, ctx, uri):
-        """Test factory creates different ArrayAdapters.
+        """Test factory creates different VArrayAdapters.
 
         :param varray_collection: Collection instance
         """

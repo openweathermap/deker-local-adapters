@@ -14,8 +14,7 @@ from deker.errors import DekerArrayError
 from deker.locks import CreateArrayLock, UpdateMetaAttributeLock
 from deker.log import SelfLoggerMixin
 from deker.tools.decorators import check_ctx_state
-from deker.types.classes import ArrayMeta
-from deker.types.typings import Numeric, Slice
+from deker.types import ArrayMeta, Numeric, Slice
 from numpy import ndarray
 
 from deker_local_adapters.mixin import LocalAdapterMixin

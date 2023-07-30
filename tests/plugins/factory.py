@@ -5,5 +5,5 @@ from deker_local_adapters.factory import AdaptersFactory
 
 @pytest.fixture()
 def factory(ctx, uri) -> AdaptersFactory:
-    """Creates ArraysAdaptersFactory instance."""
+    """Returns AdaptersFactory instance."""
     return AdaptersFactory(ctx, uri)

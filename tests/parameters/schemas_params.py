@@ -13,8 +13,8 @@ from deker.schemas import (
     TimeDimensionSchema,
     VArraySchema,
 )
-from deker.types.classes import Scale
-from deker.types.typings import Numeric
+from deker.types import Scale
+from deker.types import Numeric
 
 from tests.parameters.common import (
     INTEG,

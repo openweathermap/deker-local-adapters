@@ -123,7 +123,6 @@ class TestOptions:
 
     def test_array_is_compressed(self, client, root_path):
         dims = [DimensionSchema(name="x", size=1024), DimensionSchema(name="y", size=1024)]
-        # options = HDF5Options(chunks=None, compression_opts=HDF5CompressionOpts(**hdf5plugin.Zstd(15)))
         options = HDF5Options(
             chunks=None,
             compression_opts=HDF5CompressionOpts(compression="gzip", compression_opts=9),

@@ -15,7 +15,7 @@ from deker.schemas import (
     TimeDimensionSchema,
     VArraySchema,
 )
-from deker.types.classes import Scale
+from deker.types import Scale
 
 from deker_local_adapters import HDF5Options
 

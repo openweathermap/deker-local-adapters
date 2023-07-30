@@ -13,7 +13,7 @@ from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5
 
 from tests.parameters.common import random_string
 
-from deker_local_adapters import LocalCollectionAdapter
+from deker_local_adapters import LocalCollectionAdapter, AdaptersFactory
 
 
 @pytest.mark.asyncio()
@@ -23,9 +23,9 @@ class TestCollectionAdapter:
     def test_collection_adapter_create_collection(
         self,
         collection_adapter: LocalCollectionAdapter,
-        root_path,
+        root_path: Path,
         array_schema: ArraySchema,
-        factory,
+        factory: AdaptersFactory,
     ):
         """Tests if adapter creates array_collection in DB.
 
@@ -40,12 +40,12 @@ class TestCollectionAdapter:
     def test_collection_adapter_create_collection_memory_error(
         self,
         collection_adapter: LocalCollectionAdapter,
-        factory,
+        factory: AdaptersFactory,
     ):
         """Tests if adapter raises memory error on collection creation.
 
         :param collection_adapter: CollectionAdapter
-        :param root_path: Path to collections directory
+        :param factory: AdaptersFactory
         """
         collection_adapter.ctx.config.memory_limit = 100
         schema = ArraySchema(
@@ -63,7 +63,7 @@ class TestCollectionAdapter:
         self,
         collection_adapter: LocalCollectionAdapter,
         array_collection: Collection,
-        root_path,
+        root_path: Path,
     ):
         """Tests if array_collection adapter deletes array_collection from db properly.
 
@@ -92,11 +92,11 @@ class TestCollectionAdapter:
         self,
         array_collection: Collection,
         collection_adapter: LocalCollectionAdapter,
-        root_path,
+        root_path: Path,
     ):
         """Tests clearing data directory.
 
-        :param collection: Pre created collection
+        :param array_collection: Pre created collection
         :param collection_adapter: collection adapter
         :param root_path: Path to collections directory
         """

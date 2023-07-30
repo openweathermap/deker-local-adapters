@@ -13,8 +13,7 @@ from deker.log import SelfLoggerMixin
 from deker.schemas import AttributeSchema
 from deker.tools import create_array_from_meta, get_main_path, get_symlink_path
 from deker.tools.decorators import check_ctx_state
-from deker.types.classes import ArrayMeta
-from deker.types.typings import Numeric, Slice
+from deker.types import ArrayMeta, Numeric, Slice
 from numpy import ndarray
 
 from deker_local_adapters.mixin import LocalAdapterMixin

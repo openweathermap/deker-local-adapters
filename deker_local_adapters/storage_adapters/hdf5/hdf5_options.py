@@ -1,10 +1,10 @@
 from dataclasses import asdict, dataclass
-from enum import Enum
 from typing import List, Optional, Tuple, Union
 
 from deker.ABC.base_collection import BaseCollectionOptions
 from deker.errors import DekerValidationError
 from deker.types import Serializer
+from deker_local_adapters.storage_adapters.enums import HDF5BuiltinCompressionStringOptions, HDF5ChunksOptions
 
 
 @dataclass()
@@ -13,13 +13,16 @@ class HDF5CompressionOpts(Serializer):
 
     :param compression: compression filter name
     :param compression_opts: compression level
-        Depending on compressing filter compression_opts may be None, integer or tuple.
-        E.g.:
-            - `hdf5plugin.Blosc` object accepts several parameters, including `clevel`,
-            - `hdf5plugin.Zstd` object accepts an integer in range 1-22,
-            - `szip` filter accepts a tuple of a string and an integer,
-            - `hdf5plugin.FciDecomp` or `lzf` filters do not accept any parameters at all.
-        Read correspondent filter documentation for more information.
+
+                             Depending on compressing filter compression_opts may be None, integer or tuple.
+                             E.g.:
+
+                             - `hdf5plugin.Blosc` object accepts several parameters, including `clevel`,
+                             - `hdf5plugin.Zstd` object accepts an integer in range 1-22,
+                             - `szip` filter accepts a tuple of a string and an integer,
+                             - `hdf5plugin.FciDecomp` or `lzf` filters do not accept any parameters at all.
+
+                             Read correspondent filter documentation for more information.
     """
 
     compression: Optional[Union[str, int]]
@@ -80,22 +83,6 @@ class HDF5CompressionOpts(Serializer):
         return self.__repr__()
 
 
-class HDF5BuiltinCompressionStringOptions(Enum):
-    """Enum for HDF5 builtin compression strings."""
-
-    none = "none"
-    gzip = "gzip"
-    szip = "szip"
-    lzf = "lzf"
-
-
-class HDF5ChunksOptions(Enum):
-    """Enum for HDF5 chunk options."""
-
-    manual = "manual"
-    true = "true"
-
-
 @dataclass()
 class HDF5Options(BaseCollectionOptions):
     """Class for collection on-disk configuration.
@@ -103,24 +90,28 @@ class HDF5Options(BaseCollectionOptions):
     Provided that local storage is based on `hdf5`-files, it uses chunks and compression for disk usage optimization.
 
     :param chunks: Data, stored in hdf5, may be chunked.
-        HDF5-format and `h5py` library provide 3 use cases:
-            1) None: no chunking is used
-            2) True: data is being chunked automatically with the algorithms and in pieces calculated by HDF5
-            3) tuple of integers: user defined chunk-size.
-                E.g. data shape is (100, 100, 100). Upon his/her mind user may chunk it by (1, 10, 100)
-                or by any other applicable chunk size.
-        ref.: https://docs.h5py.org/en/stable/high/dataset.html#chunked-storage
-    :param compression_opts: HDF5 compression options.
-        HDF5 chunked data may be transformed by the HDF5 filter pipeline.
-        To use built-in and custom compression filters correctly you shall unpack such filter
-        into a HDF5CompressionOpts
 
-        There are 3 built-in lossless compression filters:
-            1) "gzip",
-            2) "lzf",
-            3) "szip"
-        More filters can be found in `hdf5plugin`.
-        ref.: https://docs.h5py.org/en/stable/high/dataset.html#filter-pipeline
+                   HDF5-format and `h5py` library provide 3 use cases:
+
+                   1) None: no chunking is used
+                   2) True: data is being chunked automatically with the algorithms and in pieces calculated by HDF5
+                   3) tuple of integers: user defined chunk-size.
+                      E.g. data shape is (100, 100, 100). Upon his/her mind user may chunk it by (1, 10, 100)
+                      or by any other applicable chunk size. See chunked storage reference.
+
+    :param compression_opts: HDF5 compression options.
+
+                             HDF5 chunked data may be transformed by the HDF5 filter pipeline.
+                             To use built-in and custom compression filters correctly you shall unpack such filter
+                             into a HDF5CompressionOpts. There are 3 built-in lossless compression filters:
+
+                             1) "gzip",
+                             2) "lzf",
+                             3) "szip"
+
+    More filters can be found in `hdf5plugin`.
+    ref.: https://docs.h5py.org/en/stable/high/dataset.html#chunked-storage
+    ref.: https://docs.h5py.org/en/stable/high/dataset.html#filter-pipeline
     """
 
     chunks: Optional[Union[bool, Tuple[int, ...], List[int]]] = None

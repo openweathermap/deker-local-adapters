@@ -2,6 +2,7 @@ import json
 import os
 
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
@@ -16,7 +17,7 @@ from deker.errors import DekerArrayError, DekerArrayTypeError, DekerValidationEr
 from deker.schemas import ArraySchema, DimensionSchema
 from deker.tools import create_array_from_meta, get_paths
 
-from deker_local_adapters import LocalArrayAdapter
+from deker_local_adapters import LocalArrayAdapter, AdaptersFactory
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 
@@ -113,11 +114,8 @@ class TestArrayAdapter:
 
         :param root_path: temporary array_collection root path
         :param array: Pre created array
-        :param data: array data from options
+        :param data: data to update the array
         """
-
-
-
         coll_path = root_path / factory.ctx.config.collections_directory / array.collection
         array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
         paths = get_paths(array, coll_path)
@@ -147,7 +145,7 @@ class TestArrayAdapter:
 
         :param root_path: temporary array_collection root path
         :param array: Pre created array
-        :param data: array data from options
+        :param data: data to update the array
         """
         coll_path = root_path / factory.ctx.config.collections_directory / array.collection
         paths = get_paths(array, coll_path)
@@ -187,14 +185,14 @@ class TestArrayAdapter:
         self,
         root_path,
         array: Array,
-        factory,
+        factory: AdaptersFactory,
         data: Any,
     ):
         """Tests if array adapter reads array data properly.
 
         :param root_path: temporary array_collection root path
         :param array: Pre created array
-        :param data: array data from options
+        :param data: data to update the array
         """
         coll_path = root_path / factory.ctx.config.collections_directory / array.collection
         paths = get_paths(array, coll_path)
@@ -208,9 +206,9 @@ class TestArrayAdapter:
 
     def test_array_adapter_reads_cleared_data_from_array(
         self,
-        root_path,
+        root_path: Path,
         array: Array,
-        factory,
+        factory: AdaptersFactory,
     ):
         """Tests if array adapter reads cleared array data properly.
 
@@ -238,7 +236,7 @@ class TestArrayAdapter:
         self,
         root_path,
         array: Array,
-        factory,
+        factory: AdaptersFactory,
         metakey: Any,
         expected: Any,
     ):
@@ -246,6 +244,7 @@ class TestArrayAdapter:
 
         :param root_path: temporary array_collection root path
         :param array: Pre created array
+        :param factory: AdaptersFactory
         :param metakey: key in metadata
         :param expected: expected value of metakey
         """
@@ -326,7 +325,6 @@ class TestArrayAdapter:
     ):
         """Tests getting array path from attributes.
 
-        :param root_path: temporary array_collection root path
         :param array_with_attributes: Array which contains some primary attributes
         """
         main_tree, rest = array_with_attributes.id.split("-", 1)

@@ -1,20 +1,20 @@
-.. Deker documentation master file, created by
-   sphinx-quickstart on Thu Jul 20 16:15:05 2023.
-   You can adapt this file completely to your liking, but it should at least
-   contain the root `toctree` directive.
+Deker local adapters
+====================
 
-Welcome to Deker's documentation!
-=================================
+Deker local adapters provide file storage support for Deker, enabling the storage and management of numeric data on the local file system.
+The module supports storage in the HDF5 file format and allows configuring HDF chunks and compression.
+
+Modules
+-------
+
+- **Collection Adapter**: Manages collection objects on the file system level.
+- **Array Adapter**: Manages Array objects, provides CRUD methods, allows to update data and meta.
+- **VArray Adapter**: Manages VArray objects.
+- **HDF5 Options**: Provides options for configuring how collections save arrays in HDF5 format.
+- **HDF5 Storage Adapter**: Handles the actual storage and retrieval of data in HDF5 format.
 
 .. toctree::
-   :maxdepth: 2
-   :caption: Contents:
+   :maxdepth: 4
+   :hidden:
 
-
-
-Indices and tables
-==================
-
-* :ref:`genindex`
-* :ref:`modindex`
-* :ref:`search`
+    Deker local adapters API <source/api/modules>
