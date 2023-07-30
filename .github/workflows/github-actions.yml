@@ -43,7 +43,6 @@ jobs:
 
   build_wheels:
     name: Build wheels on ${{ matrix.os }}
-    needs: linters
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     runs-on: ${{ matrix.os }}
     env:
@@ -61,7 +60,6 @@ jobs:
 
 
   build_sdist:
-    needs: linters
     env:
       PACKAGE_VERSION: ${{ github.REF_NAME }}
     name: Build source distribution
