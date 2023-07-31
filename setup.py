@@ -18,7 +18,7 @@ def get_version() -> str:
     Regexp reference:
     https://gitlab.openweathermap.org/help/user/packages/pypi_repository/index.md#ensure-your-version-string-is-valid
     """
-    ci_commit_tag: Optional[str] = os.getenv("PACKAGE_VERSION", "0.0.0")
+    ci_commit_tag: Optional[str] = os.getenv("PACKAGE_VERSION", "1.0.0b-1")
     regex = (
         r"(?:"
         r"(?:([0-9]+)!)?"
