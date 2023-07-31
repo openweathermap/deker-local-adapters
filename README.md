@@ -1,6 +1,6 @@
 # Deker local adapters
 
-Deker local adapters provide file storage support for Deker using HDF5.
+**Deker local adapters** is an official native plugin for [Deker](https://github.com/openweathermap/deker), 
+which provides support for embedded storage management.
 
-## Documentation
-link
+Check out [Deker documentation](https://docs.deker.io) for more details.
