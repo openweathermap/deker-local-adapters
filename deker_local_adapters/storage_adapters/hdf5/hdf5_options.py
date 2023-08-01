@@ -52,9 +52,7 @@ class HDF5CompressionOpts(Serializer):
                     f"Invalid compression type: {type(self.compression)}; str, int or None expected"
                 )
 
-            if isinstance(self.compression, str) and (
-                self.compression.isspace() or not self.compression
-            ):
+            if isinstance(self.compression, str) and (self.compression.isspace() or not self.compression):
                 raise DekerValidationError(f"Invalid compression value: {self.compression}")
 
             if isinstance(self.compression, int) and self.compression < 0:
@@ -67,9 +65,7 @@ class HDF5CompressionOpts(Serializer):
                     "Perhaps you forgot to indicate filter name?"
                 )
 
-            if not isinstance(self.compression_opts, (list, tuple, int)) or isinstance(
-                self.compression_opts, bool
-            ):
+            if not isinstance(self.compression_opts, (list, tuple, int)) or isinstance(self.compression_opts, bool):
                 raise DekerValidationError(
                     f"Invalid compression_opts type: {type(self.compression)}; list, tuple, int or None expected"
                 )
@@ -81,9 +77,7 @@ class HDF5CompressionOpts(Serializer):
                 self.compression_opts = None
 
             if isinstance(self.compression_opts, int) and self.compression_opts < 0:
-                raise DekerValidationError(
-                    f"Invalid compression level value: {self.compression_opts}"
-                )
+                raise DekerValidationError(f"Invalid compression level value: {self.compression_opts}")
 
     @property
     def as_dict(self) -> dict:

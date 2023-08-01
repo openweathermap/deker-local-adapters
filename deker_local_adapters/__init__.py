@@ -23,6 +23,6 @@ from .storage_adapters import (
     HDF5Options,
     HDF5StorageAdapter,
     HDF5BuiltinCompressionStringOptions,
-    HDF5ChunksOptions
+    HDF5ChunksOptions,
 )
 from .varray_adapter import LocalVArrayAdapter

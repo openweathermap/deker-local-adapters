@@ -104,9 +104,7 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
                 meta = json.loads(data)
                 return meta
         except Exception:
-            raise DekerArrayError(
-                "No metadata in the varray. Try to delete and recreate the varray."
-            )
+            raise DekerArrayError("No metadata in the varray. Try to delete and recreate the varray.")
 
     @check_ctx_state
     @UpdateMetaAttributeLock()

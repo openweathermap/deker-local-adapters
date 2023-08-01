@@ -73,11 +73,7 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
             {"vid": vid, "v_position": vpos},
         )
         try:
-            files = [
-                file
-                for file in sympath_to_dir.iterdir()
-                if file.is_file() and file.name.endswith(self.file_ext)
-            ]
+            files = [file for file in sympath_to_dir.iterdir() if file.is_file() and file.name.endswith(self.file_ext)]
             if files:
                 # just one file is expected inside the list
                 return files[0]
@@ -126,9 +122,7 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
         """
         filename = self._get_main_path_to_file(array)
 
-        return self.storage_adapter.read_data(
-            filename, array.shape, bounds, array.fill_value, array.dtype
-        )
+        return self.storage_adapter.read_data(filename, array.shape, bounds, array.fill_value, array.dtype)
 
     @check_ctx_state
     @ReadArrayLock()

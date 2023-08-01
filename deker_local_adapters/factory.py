@@ -55,9 +55,7 @@ class AdaptersFactory(BaseAdaptersFactory):
         :param storage_adapter: storage adapter implementation
         :param collection_options: chunking and compression options
         """
-        return LocalArrayAdapter(
-            collection_path, self.ctx, storage_adapter, self.executor, collection_options
-        )
+        return LocalArrayAdapter(collection_path, self.ctx, storage_adapter, self.executor, collection_options)
 
     @check_ctx_state
     def get_varray_adapter(

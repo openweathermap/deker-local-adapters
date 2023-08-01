@@ -15,10 +15,5 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 # nopycln: file
-from .hdf5_options import (
-    HDF5CompressionOpts,
-    HDF5Options,
-    HDF5ChunksOptions,
-    HDF5BuiltinCompressionStringOptions
-)
+from .hdf5_options import HDF5CompressionOpts, HDF5Options, HDF5ChunksOptions, HDF5BuiltinCompressionStringOptions
 from .hdf5_storage_adapter import HDF5StorageAdapter

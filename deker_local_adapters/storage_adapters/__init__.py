@@ -19,5 +19,5 @@ from .hdf5 import (
     HDF5Options,
     HDF5CompressionOpts,
     HDF5ChunksOptions,
-    HDF5BuiltinCompressionStringOptions
+    HDF5BuiltinCompressionStringOptions,
 )

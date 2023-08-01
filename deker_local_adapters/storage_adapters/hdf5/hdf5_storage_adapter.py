@@ -50,9 +50,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
     file_ext: str = ".hdf5"
     storage_options = HDF5Options
 
-    def create(
-        self, path: Path, array_shape: Tuple[int, ...], metadata: Union[str, bytes, dict]
-    ) -> None:
+    def create(self, path: Path, array_shape: Tuple[int, ...], metadata: Union[str, bytes, dict]) -> None:
         """Create new hdf5 file with metadata.
 
         :param path: path to hdf5 file
@@ -124,9 +122,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
             self.logger.debug(f"{path} opened in 'r'-mode")
             ds: Dataset = f.get("meta")
             if not ds:
-                raise DekerArrayError(
-                    "No metadata in the array. Try to delete and recreate the array."
-                )
+                raise DekerArrayError("No metadata in the array. Try to delete and recreate the array.")
             data = ds[()]
         decoded = data.decode("utf-8")
         meta = json.loads(decoded)
@@ -231,9 +227,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 self.logger.debug(f"{path} opened in 'r+'-mode")
                 ds = f.get("meta")
                 if not ds:
-                    raise DekerArrayError(
-                        "No metadata in the array. Try to delete and recreate the array."
-                    )
+                    raise DekerArrayError("No metadata in the array. Try to delete and recreate the array.")
                 meta = json.loads(ds[()])
                 del f["meta"]
                 f.flush()
@@ -254,9 +248,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
             self.logger.exception(e)
             raise e
 
-    def clear_data(
-        self, path: Path, array_shape: Tuple[int, ...], bounds: Slice, fill_value: Numeric
-    ) -> None:
+    def clear_data(self, path: Path, array_shape: Tuple[int, ...], bounds: Slice, fill_value: Numeric) -> None:
         """Clear array data in hdf5 file.
 
         :param path: path to hdf5 file
