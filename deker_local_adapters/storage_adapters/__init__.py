@@ -15,9 +15,9 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from .hdf5 import (
-    HDF5StorageAdapter,
-    HDF5Options,
-    HDF5CompressionOpts,
+    HDF5BuiltinCompressionStringOptions,
     HDF5ChunksOptions,
-    HDF5BuiltinCompressionStringOptions
+    HDF5CompressionOpts,
+    HDF5Options,
+    HDF5StorageAdapter,
 )

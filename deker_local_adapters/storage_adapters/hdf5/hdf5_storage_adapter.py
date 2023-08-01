@@ -50,9 +50,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
     file_ext: str = ".hdf5"
     storage_options = HDF5Options
 
-    def create(
-        self, path: Path, array_shape: Tuple[int, ...], metadata: Union[str, bytes, dict]
-    ) -> None:
+    def create(self, path: Path, array_shape: Tuple[int, ...], metadata: Union[str, bytes, dict]) -> None:
         """Create new hdf5 file with metadata.
 
         :param path: path to hdf5 file
@@ -66,7 +64,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 if not isinstance(metadata, (str, bytes)):
                     value = json.dumps(metadata, default=str)
                 else:
-                    value = metadata
+                    value = metadata  # type: ignore[assignment]
                 dtype = f"S{sys.getsizeof(value.encode('utf-8'))}"
                 shape = ()
                 meta_ds = f.create_dataset(
@@ -124,9 +122,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
             self.logger.debug(f"{path} opened in 'r'-mode")
             ds: Dataset = f.get("meta")
             if not ds:
-                raise DekerArrayError(
-                    "No metadata in the array. Try to delete and recreate the array."
-                )
+                raise DekerArrayError("No metadata in the array. Try to delete and recreate the array.")
             data = ds[()]
         decoded = data.decode("utf-8")
         meta = json.loads(decoded)
@@ -196,8 +192,8 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                         ds_kwargs = {"data": to_storage, "dtype": dtype, "shape": shape}
 
                         if collection_options:
-                            compression = collection_options.compression_opts.compression
-                            options = collection_options.compression_opts.compression_opts
+                            compression = collection_options.compression_opts.compression  # type: ignore[union-attr]
+                            options = collection_options.compression_opts.compression_opts  # type: ignore[union-attr]
                             ds_kwargs.update(
                                 {
                                     "chunks": collection_options.chunks,  # type: ignore[dict-item]
@@ -231,9 +227,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 self.logger.debug(f"{path} opened in 'r+'-mode")
                 ds = f.get("meta")
                 if not ds:
-                    raise DekerArrayError(
-                        "No metadata in the array. Try to delete and recreate the array."
-                    )
+                    raise DekerArrayError("No metadata in the array. Try to delete and recreate the array.")
                 meta = json.loads(ds[()])
                 del f["meta"]
                 f.flush()
@@ -254,9 +248,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
             self.logger.exception(e)
             raise e
 
-    def clear_data(
-        self, path: Path, array_shape: Tuple[int, ...], bounds: Slice, fill_value: Numeric
-    ) -> None:
+    def clear_data(self, path: Path, array_shape: Tuple[int, ...], bounds: Slice, fill_value: Numeric) -> None:
         """Clear array data in hdf5 file.
 
         :param path: path to hdf5 file

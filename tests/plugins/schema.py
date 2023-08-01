@@ -6,13 +6,7 @@ from typing import List
 import pytest
 
 from deker.ABC.base_schemas import BaseDimensionSchema
-from deker.schemas import (
-    ArraySchema,
-    AttributeSchema,
-    DimensionSchema,
-    TimeDimensionSchema,
-    VArraySchema,
-)
+from deker.schemas import ArraySchema, AttributeSchema, DimensionSchema, TimeDimensionSchema, VArraySchema
 
 
 @pytest.fixture()
