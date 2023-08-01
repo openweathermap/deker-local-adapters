@@ -1,0 +1,24 @@
+[run]
+branch = True
+omit =
+    examples/*
+    tests/*
+    tmp.py
+    setup.py
+
+[html]
+directory = tests/code_coverage
+
+[report]
+fail_under=50
+exclude_lines =
+    no cov
+    pragma: no cover
+    if typing.TYPE_CHECKING:
+    if TYPE_CHECKING:
+    if __name__ == .__main__.:
+    pass
+    raise NotImplementedError
+    except ImportError
+    except ModuleNotFoundError
+    except Exception
