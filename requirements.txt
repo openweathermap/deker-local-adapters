@@ -1,0 +1,5 @@
+# # public PYPI packages here
+numpy>=1.18
+h5py>=3.8.0
+hdf5plugin>=4.0.1
+deker-tools==1.0.0

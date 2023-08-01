@@ -1,0 +1,69 @@
+name: CI/CD
+
+on:
+  push:
+  pull_request:
+
+env:
+  PYTHON_IMAGE: 3.9
+  DOCKER_IMAGE: docker:20.10.23
+  PYTHON_PACKAGE_NAME: deker-local-adapters 
+  DOCKER_REG_IMAGE: ${{ secrets.CI_REGISTRY_IMAGE }}
+
+jobs:
+
+  build_wheels:
+    name: Build wheels on ${{ matrix.os }}
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ${{ matrix.os }}
+    env:
+      PACKAGE_VERSION: ${{ github.REF_NAME }}
+    strategy:
+      matrix:
+        os: [ubuntu-22.04]
+
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build wheels
+        run: |
+          pip wheel -w ./wheelhouse .
+
+
+  build_sdist:
+    env:
+      PACKAGE_VERSION: ${{ github.REF_NAME }}
+    name: Build source distribution
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Build sdist
+        run: pipx run build --sdist
+
+      - uses: actions/upload-artifact@v3
+        with:
+          path: dist/*.tar.gz
+
+  upload_pypi:
+    needs: [build_wheels, build_sdist]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    environment:
+      name: pypi
+      url: https://pypi.org/p/deker-local-adapters
+    
+    steps:
+      - uses: actions/download-artifact@v3
+        with:
+          # unpacks default artifact into dist/
+          # if `name: artifact` is omitted, the action will create extra parent dir
+          name: artifact
+          path: dist
+
+      - name: Publish package distributions to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
