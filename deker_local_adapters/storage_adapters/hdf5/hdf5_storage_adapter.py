@@ -192,8 +192,8 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                         ds_kwargs = {"data": to_storage, "dtype": dtype, "shape": shape}
 
                         if collection_options:
-                            compression = collection_options.compression_opts.compression
-                            options = collection_options.compression_opts.compression_opts
+                            compression = collection_options.compression_opts.compression  # type: ignore[union-attr]
+                            options = collection_options.compression_opts.compression_opts  # type: ignore[union-attr]
                             ds_kwargs.update(
                                 {
                                     "chunks": collection_options.chunks,  # type: ignore[dict-item]

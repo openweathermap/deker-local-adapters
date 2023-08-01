@@ -220,7 +220,7 @@ class HDF5Options(BaseCollectionOptions):
                     elif chunks == HDF5ChunksOptions.true.value:
                         chunks = True  # type: ignore[assignment]
                     else:
-                        chunks = None
+                        chunks = None  # type: ignore[assignment]
                     coll_params.update({"chunks": chunks})
         if compression:
             coll_params.update({"compression_opts": HDF5CompressionOpts(**compression)})  # type: ignore[dict-item]
@@ -233,7 +233,7 @@ class HDF5Options(BaseCollectionOptions):
         compression_dict = asdict(self.compression_opts)  # type: ignore[arg-type]
         options: Optional[Tuple[Optional[str], ...]] = None
 
-        if self.compression_opts.compression is None:
+        if self.compression_opts.compression is None:  # type: ignore[union-attr]
             compression_dict["compression"] = "none"
             options = tuple()
         else:
