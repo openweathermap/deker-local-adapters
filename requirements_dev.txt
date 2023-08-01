@@ -19,3 +19,5 @@ pytest-cov
 pytest-random-order
 pytest-sugar
 ssort
+
+deker==1.0.0
