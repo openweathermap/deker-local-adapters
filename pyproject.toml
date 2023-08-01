@@ -62,7 +62,7 @@ authors = [
 maintainers = [
         {name = "OpenWeather", email = "info@openweathermap.org"},
 ]
-description = "Interactive shell for Deker"
+description = "Plugin with local adapters for deker" 
 license = {text = "GPL-3.0-only"}
 
 classifiers = [
