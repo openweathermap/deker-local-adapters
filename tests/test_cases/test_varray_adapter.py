@@ -9,10 +9,10 @@ from deker.arrays import VArray
 from deker.collection import Collection
 from deker.errors import DekerArrayError, DekerValidationError
 from deker.tools import create_array_from_meta, get_paths
-from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 from deker_tools.path import is_empty
 
 from deker_local_adapters import LocalVArrayAdapter
+from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 
 class TestVArrayAdapterMethods:
@@ -72,9 +72,7 @@ class TestVArrayAdapterMethods:
         assert not (paths.symlink / array.id).exists()
         assert not (paths.main / array.id).exists()
         assert not paths.main.exists()
-        assert not (
-            varray._VArray__collection.path / ctx.config.array_data_directory / array.id
-        ).exists()
+        assert not (varray._VArray__collection.path / ctx.config.array_data_directory / array.id).exists()
 
         assert not is_empty(
             varray._VArray__collection.path / ctx.config.array_symlinks_directory  # type: ignore[attr-defined]
@@ -101,9 +99,7 @@ class TestVArrayAdapterMethods:
         assert not (paths.symlink / array.id).exists()
         assert not (paths.main / array.id).exists()
         assert not paths.main.exists()
-        assert not (
-            varray._VArray__collection.path / ctx.config.array_data_directory / array.id
-        ).exists()
+        assert not (varray._VArray__collection.path / ctx.config.array_data_directory / array.id).exists()
 
         assert is_empty(
             varray._VArray__collection.path / ctx.config.array_symlinks_directory  # type: ignore[attr-defined]

@@ -8,13 +8,7 @@ import pytest
 
 from deker.client import Client
 from deker.collection import Collection
-from deker.schemas import (
-    ArraySchema,
-    AttributeSchema,
-    DimensionSchema,
-    TimeDimensionSchema,
-    VArraySchema,
-)
+from deker.schemas import ArraySchema, AttributeSchema, DimensionSchema, TimeDimensionSchema, VArraySchema
 from deker.types import Scale
 
 from deker_local_adapters import HDF5Options
@@ -62,9 +56,7 @@ def varray_collection(
     client: "Client",
     varray_schema: "VArraySchema",
 ) -> Collection:
-    coll = client.create_collection(
-        name="".join(choices(ascii_letters, k=10)), schema=varray_schema
-    )
+    coll = client.create_collection(name="".join(choices(ascii_letters, k=10)), schema=varray_schema)
     yield coll
     coll.delete()
 
@@ -74,9 +66,7 @@ def varray_collection_with_attributes(
     client: "Client",
     varray_schema_with_attributes: "VArraySchema",
 ) -> Collection:
-    coll = client.create_collection(
-        name="".join(choices(ascii_letters, k=10)), schema=varray_schema_with_attributes
-    )
+    coll = client.create_collection(name="".join(choices(ascii_letters, k=10)), schema=varray_schema_with_attributes)
     yield coll
     coll.delete()
 
@@ -125,12 +115,8 @@ def timed_collection(client) -> Collection:
     """Creates collection with regular scale description."""
     schema = ArraySchema(
         dimensions=[
-            TimeDimensionSchema(
-                name="days", size=31, start_value=datetime(2023, 1, 1), step=timedelta(days=1)
-            ),
-            TimeDimensionSchema(
-                name="hours", size=24, start_value="$time", step=timedelta(hours=1)
-            ),
+            TimeDimensionSchema(name="days", size=31, start_value=datetime(2023, 1, 1), step=timedelta(days=1)),
+            TimeDimensionSchema(name="hours", size=24, start_value="$time", step=timedelta(hours=1)),
         ],
         attributes=[AttributeSchema(name="time", dtype=datetime, primary=True)],
         dtype=float,
@@ -145,12 +131,8 @@ def timed_varray_collection(client) -> Collection:
     """Creates collection with regular scale description."""
     schema = VArraySchema(
         dimensions=[
-            TimeDimensionSchema(
-                name="days", size=31, start_value=datetime(2023, 1, 1), step=timedelta(days=1)
-            ),
-            TimeDimensionSchema(
-                name="hours", size=24, start_value="$time", step=timedelta(hours=1)
-            ),
+            TimeDimensionSchema(name="days", size=31, start_value=datetime(2023, 1, 1), step=timedelta(days=1)),
+            TimeDimensionSchema(name="hours", size=24, start_value="$time", step=timedelta(hours=1)),
         ],
         attributes=[AttributeSchema(name="time", dtype=datetime, primary=True)],
         dtype=float,

@@ -21,15 +21,16 @@ from deker.ABC import BaseCollectionAdapter
 from deker.ABC.base_factory import BaseAdaptersFactory
 from deker.tools.decorators import check_ctx_state
 
-from deker_local_adapters.errors import DekerStorageError
 from deker_local_adapters.array_adapter import LocalArrayAdapter
 from deker_local_adapters.collection_adapter import LocalCollectionAdapter
+from deker_local_adapters.errors import DekerStorageError
 from deker_local_adapters.storage_adapters import HDF5StorageAdapter
-from deker_local_adapters.varray_adapter import LocalVArrayAdapter
 from deker_local_adapters.storage_adapters.enums import StorageAdapterTypes
+from deker_local_adapters.varray_adapter import LocalVArrayAdapter
+
 
 if TYPE_CHECKING:
-    from deker.ABC.base_adapters import BaseArrayAdapter, BaseVArrayAdapter, BaseStorageAdapter
+    from deker.ABC.base_adapters import BaseArrayAdapter, BaseStorageAdapter, BaseVArrayAdapter
     from deker.ABC.base_collection import BaseCollectionOptions
 
 
@@ -55,9 +56,7 @@ class AdaptersFactory(BaseAdaptersFactory):
         :param storage_adapter: storage adapter implementation
         :param collection_options: chunking and compression options
         """
-        return LocalArrayAdapter(
-            collection_path, self.ctx, storage_adapter, self.executor, collection_options
-        )
+        return LocalArrayAdapter(collection_path, self.ctx, storage_adapter, self.executor, collection_options)
 
     @check_ctx_state
     def get_varray_adapter(

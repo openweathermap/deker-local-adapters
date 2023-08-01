@@ -130,9 +130,7 @@ class TestOptions:
 
         schema = ArraySchema(dtype=float, dimensions=dims)
         collection = client.create_collection("simple", schema=schema)
-        compressed = client.create_collection(
-            "compressed", schema=schema, collection_options=options
-        )
+        compressed = client.create_collection("compressed", schema=schema, collection_options=options)
         collection_path = collection.path
         compressed_path = compressed.path
         data = np.random.random((1024, 1024))
@@ -206,9 +204,7 @@ class TestOptions:
         compression,
         level,
     ):
-        params = HDF5Options(
-            chunks, HDF5CompressionOpts(compression=compression, compression_opts=level)
-        )
+        params = HDF5Options(chunks, HDF5CompressionOpts(compression=compression, compression_opts=level))
         collection = client.create_collection(name, array_schema, params)
         try:
             assert collection.options.as_dict == params.as_dict
