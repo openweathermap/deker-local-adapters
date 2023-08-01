@@ -9,11 +9,11 @@ from deker.client import Client
 from deker.collection import Collection
 from deker.errors import DekerMemoryError
 from deker.schemas import ArraySchema, DimensionSchema
-from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 from tests.parameters.common import random_string
 
-from deker_local_adapters import LocalCollectionAdapter, AdaptersFactory
+from deker_local_adapters import AdaptersFactory, LocalCollectionAdapter
+from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 
 @pytest.mark.asyncio()
@@ -34,7 +34,15 @@ class TestCollectionAdapter:
         :param array_schema: ArraySchema instance
         """
         name = random_string()
-        collection_adapter.create(Collection(name=name, schema=array_schema, adapter=collection_adapter, factory=factory, storage_adapter=HDF5StorageAdapter ))
+        collection_adapter.create(
+            Collection(
+                name=name,
+                schema=array_schema,
+                adapter=collection_adapter,
+                factory=factory,
+                storage_adapter=HDF5StorageAdapter,
+            )
+        )
         assert root_path.joinpath(factory.ctx.config.collections_directory).joinpath(name).exists()
 
     def test_collection_adapter_create_collection_memory_error(
@@ -57,7 +65,15 @@ class TestCollectionAdapter:
         )
         col_name = "memory_excess_adapter"
         with pytest.raises(DekerMemoryError):
-            collection_adapter.create(Collection(name=col_name, schema=schema, adapter=collection_adapter, factory=factory, storage_adapter=HDF5StorageAdapter))
+            collection_adapter.create(
+                Collection(
+                    name=col_name,
+                    schema=schema,
+                    adapter=collection_adapter,
+                    factory=factory,
+                    storage_adapter=HDF5StorageAdapter,
+                )
+            )
 
     def test_collection_adapter_deletes_collection(
         self,
@@ -103,9 +119,7 @@ class TestCollectionAdapter:
         collection_adapter.clear(array_collection)
 
         collection_dir = None
-        for child in root_path.joinpath(
-            collection_adapter.ctx.config.collections_directory
-        ).iterdir():
+        for child in root_path.joinpath(collection_adapter.ctx.config.collections_directory).iterdir():
             if child.name == array_collection.name:
                 collection_dir = child
 
@@ -113,9 +127,7 @@ class TestCollectionAdapter:
         collection_dir = os.listdir(collection_dir)
         assert f"{array_collection.name}.json" in collection_dir
 
-    def test_collection_adapter_iter(
-        self, client: Client, array_schema: ArraySchema, root_path: Path, ctx
-    ):
+    def test_collection_adapter_iter(self, client: Client, array_schema: ArraySchema, root_path: Path, ctx):
         for root, dirs, files in os.walk(root_path / ctx.config.collections_directory):
             for f in files:
                 os.remove(os.path.join(root, f))

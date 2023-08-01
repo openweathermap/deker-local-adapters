@@ -32,9 +32,7 @@ NumericDtypes = [
 
 def random_string() -> str:
     """Get random string with length from 1 to 20."""
-    strings = (
-        (digits + ascii_letters + punctuation).replace("/", "").replace("\\", "").replace("$", "")
-    )
+    strings = (digits + ascii_letters + punctuation).replace("/", "").replace("\\", "").replace("$", "")
     return "".join((random.choice(strings) for _ in range(random.randint(5, 20))))
 
 

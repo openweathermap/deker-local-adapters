@@ -68,9 +68,7 @@ def inserted_array(array_collection: Collection, array_data: np.ndarray) -> Arra
 
 
 @pytest.fixture()
-def inserted_array_with_attributes(
-    array_collection_with_attributes: Collection, array_data: np.ndarray
-) -> Array:
+def inserted_array_with_attributes(array_collection_with_attributes: Collection, array_data: np.ndarray) -> Array:
     """Returns an instance of Array with data initialized in file and attributes.
 
     :param array_collection_with_attributes: Collection object
@@ -136,9 +134,7 @@ def inserted_varray(varray_collection: Collection, array_data: np.ndarray) -> VA
 
 
 @pytest.fixture()
-def inserted_varray_with_attributes(
-    varray_collection_with_attributes: Collection, array_data: np.ndarray
-) -> VArray:
+def inserted_varray_with_attributes(varray_collection_with_attributes: Collection, array_data: np.ndarray) -> VArray:
     """Returns an instance of VArray with data initialized in file and attributes.
 
     :param varray_collection_with_attributes: Collection object

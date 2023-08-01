@@ -20,6 +20,7 @@ from typing import List, Optional, Tuple, Union
 from deker.ABC.base_collection import BaseCollectionOptions
 from deker.errors import DekerValidationError
 from deker.types import Serializer
+
 from deker_local_adapters.storage_adapters.enums import HDF5BuiltinCompressionStringOptions, HDF5ChunksOptions
 
 
@@ -189,10 +190,10 @@ class HDF5Options(BaseCollectionOptions):
                             compression_options = None
                         elif compression_type == HDF5BuiltinCompressionStringOptions.gzip.value:
                             if compression_options:
-                                compression_options = compression_options[0]
+                                compression_options = compression_options[0]  # type: ignore[assignment]
                         elif compression_type == HDF5BuiltinCompressionStringOptions.szip.value:
                             if compression_options:
-                                compression_options = tuple(compression_options)
+                                compression_options = tuple(compression_options)  # type: ignore[assignment]
                         elif compression_type == HDF5BuiltinCompressionStringOptions.lzf.value:
                             if compression_options:
                                 raise ValueError("LZF filter does not accept any options")
@@ -217,7 +218,7 @@ class HDF5Options(BaseCollectionOptions):
                     if chunks == HDF5ChunksOptions.manual.value:
                         chunks = dic["chunks"]["size"]
                     elif chunks == HDF5ChunksOptions.true.value:
-                        chunks = True
+                        chunks = True  # type: ignore[assignment]
                     else:
                         chunks = None
                     coll_params.update({"chunks": chunks})
@@ -245,11 +246,11 @@ class HDF5Options(BaseCollectionOptions):
 
         chunks = self.chunks
         if isinstance(self.chunks, (list, tuple)):
-            chunks = {"mode": "manual", "size": self.chunks}
+            chunks = {"mode": "manual", "size": self.chunks}  # type: ignore[assignment]
         elif chunks:
-            chunks = {"mode": "true"}
+            chunks = {"mode": "true"}  # type: ignore[assignment]
         else:
-            chunks = {"mode": "none"}
+            chunks = {"mode": "none"}  # type: ignore[assignment]
         return {
             "chunks": chunks,
             "compression": {"compression": compression_dict["compression"], "options": options},

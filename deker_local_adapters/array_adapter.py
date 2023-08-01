@@ -18,7 +18,7 @@ import logging
 import os
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generator, Optional, Tuple, Union, Type
+from typing import TYPE_CHECKING, Any, Generator, Optional, Tuple, Type, Union
 
 from deker.ABC.base_adapters import BaseArrayAdapter
 from deker.arrays import Array
@@ -37,6 +37,7 @@ from deker_local_adapters.mixin import LocalAdapterMixin
 
 if TYPE_CHECKING:
     from concurrent.futures import ThreadPoolExecutor
+
     from deker.ABC import BaseStorageAdapter
     from deker.ABC.base_collection import BaseCollectionOptions
     from deker.collection import Collection

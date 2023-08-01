@@ -64,7 +64,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 if not isinstance(metadata, (str, bytes)):
                     value = json.dumps(metadata, default=str)
                 else:
-                    value = metadata
+                    value = metadata  # type: ignore[assignment]
                 dtype = f"S{sys.getsizeof(value.encode('utf-8'))}"
                 shape = ()
                 meta_ds = f.create_dataset(

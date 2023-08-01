@@ -95,9 +95,7 @@ def ctx(uri: Uri, config, storage_adapter, workers) -> CTX:
 
 
 @pytest.fixture()
-def client(
-    root_path: Path, storage_adapter: Type[BaseStorageAdapter], workers: int, executor
-) -> Client:
+def client(root_path: Path, storage_adapter: Type[BaseStorageAdapter], workers: int, executor) -> Client:
     """Creates Client object and init all connections.
 
     :param root_path: path to directory with collections fixture

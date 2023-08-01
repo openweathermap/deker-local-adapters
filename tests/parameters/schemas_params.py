@@ -3,26 +3,13 @@ import random
 from datetime import datetime, timedelta
 from types import NoneType
 from typing import Any, List, Tuple, Type, Union
-from zoneinfo import ZoneInfo
 
 from deker.ABC.base_schemas import BaseDimensionSchema
-from deker.schemas import (
-    ArraySchema,
-    AttributeSchema,
-    DimensionSchema,
-    TimeDimensionSchema,
-    VArraySchema,
-)
-from deker.types import Scale
-from deker.types import Numeric
+from deker.schemas import ArraySchema, AttributeSchema, DimensionSchema, TimeDimensionSchema, VArraySchema
+from deker.types import Numeric, Scale
+from zoneinfo import ZoneInfo
 
-from tests.parameters.common import (
-    INTEG,
-    NumericDtypes,
-    _random_positive_int,
-    random_step,
-    random_string,
-)
+from tests.parameters.common import INTEG, NumericDtypes, _random_positive_int, random_step, random_string
 
 
 def get_vgrids(dimensions: List[BaseDimensionSchema]):
@@ -83,19 +70,13 @@ def time_dimension_schema_datetime_random_params() -> dict:
 class SchemaParams:
     @classmethod
     def _get_dims_dtype(cls) -> Tuple[List[DimensionSchema], Type[Numeric]]:
-        dims = [
-            DimensionSchema(**dimension_schema_random_params())
-            for _ in range(_random_positive_int())
-        ]
+        dims = [DimensionSchema(**dimension_schema_random_params()) for _ in range(_random_positive_int())]
         dtype = random.choice(NumericDtypes)
         return dims, dtype
 
     @classmethod
     def _get_attrs(cls, primary: bool) -> List[AttributeSchema]:
-        attrs = [
-            AttributeSchema(**attributes_schema_params(primary))
-            for _ in range(random.randint(1, 3))
-        ]
+        attrs = [AttributeSchema(**attributes_schema_params(primary)) for _ in range(random.randint(1, 3))]
         return attrs
 
 
@@ -108,17 +89,13 @@ class ArraySchemaParamsNoTime(SchemaParams):
     @classmethod
     def OK_params_no_vgrid_primary_attributes(cls):
         dimensions, dtype = cls._get_dims_dtype()
-        attrs = [
-            AttributeSchema(**attributes_schema_params(True)) for _ in range(random.randint(1, 3))
-        ]
+        attrs = [AttributeSchema(**attributes_schema_params(True)) for _ in range(random.randint(1, 3))]
         return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attrs)
 
     @classmethod
     def OK_params_no_vgrid_custom_attributes(cls):
         dimensions, dtype = cls._get_dims_dtype()
-        attrs = [
-            AttributeSchema(**attributes_schema_params(False)) for _ in range(random.randint(1, 3))
-        ]
+        attrs = [AttributeSchema(**attributes_schema_params(False)) for _ in range(random.randint(1, 3))]
         return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attrs)
 
     @classmethod
@@ -133,10 +110,7 @@ class ArraySchemaParamsNoTime(SchemaParams):
         attrs = [
             AttributeSchema(dtype=str, name="vid", primary=True),
             AttributeSchema(dtype=str, name="v_position", primary=True),
-            *[
-                AttributeSchema(**attributes_schema_params(True))
-                for _ in range(random.randint(1, 3))
-            ],
+            *[AttributeSchema(**attributes_schema_params(True)) for _ in range(random.randint(1, 3))],
         ]
         return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attrs)
 
@@ -187,32 +161,20 @@ class VArraySchemaParams:
         @classmethod
         def primary_attributes(cls):
             dimensions, dtype = cls._get_dims_dtype()
-            attrs = [
-                AttributeSchema(**attributes_schema_params(True))
-                for _ in range(random.randint(1, 3))
-            ]
-            return VArraySchema(
-                dimensions=dimensions, dtype=dtype, attributes=attrs, vgrid=[1] * len(dimensions)
-            )
+            attrs = [AttributeSchema(**attributes_schema_params(True)) for _ in range(random.randint(1, 3))]
+            return VArraySchema(dimensions=dimensions, dtype=dtype, attributes=attrs, vgrid=[1] * len(dimensions))
 
         @classmethod
         def custom_attributes(cls):
             dimensions, dtype = cls._get_dims_dtype()
-            attrs = [
-                AttributeSchema(**attributes_schema_params(False))
-                for _ in range(random.randint(1, 3))
-            ]
-            return VArraySchema(
-                dimensions=dimensions, dtype=dtype, attributes=attrs, vgrid=[1] * len(dimensions)
-            )
+            attrs = [AttributeSchema(**attributes_schema_params(False)) for _ in range(random.randint(1, 3))]
+            return VArraySchema(dimensions=dimensions, dtype=dtype, attributes=attrs, vgrid=[1] * len(dimensions))
 
         @classmethod
         def no_vgrid_all_attrs(cls):
             dimensions, dtype = cls._get_dims_dtype()
             attrs = [*cls._get_attrs(True), *cls._get_attrs(False)]
-            return VArraySchema(
-                dimensions=dimensions, dtype=dtype, attributes=attrs, vgrid=[1] * len(dimensions)
-            )
+            return VArraySchema(dimensions=dimensions, dtype=dtype, attributes=attrs, vgrid=[1] * len(dimensions))
 
         @classmethod
         def vgrid_primary_attributes(cls):
@@ -220,14 +182,9 @@ class VArraySchemaParams:
             attrs = [
                 AttributeSchema(dtype=str, name="vid", primary=True),
                 AttributeSchema(dtype=str, name="v_position", primary=True),
-                *[
-                    AttributeSchema(**attributes_schema_params(True))
-                    for _ in range(random.randint(1, 3))
-                ],
+                *[AttributeSchema(**attributes_schema_params(True)) for _ in range(random.randint(1, 3))],
             ]
-            return VArraySchema(
-                dimensions=dimensions, dtype=dtype, attributes=attrs, vgrid=[1] * len(dimensions)
-            )
+            return VArraySchema(dimensions=dimensions, dtype=dtype, attributes=attrs, vgrid=[1] * len(dimensions))
 
         @classmethod
         def vgrid_all_attrs(cls):
@@ -238,9 +195,7 @@ class VArraySchemaParams:
                 *cls._get_attrs(False),
                 *cls._get_attrs(True),
             ]
-            return VArraySchema(
-                dimensions=dimensions, dtype=dtype, attributes=attrs, vgrid=[1] * len(dimensions)
-            )
+            return VArraySchema(dimensions=dimensions, dtype=dtype, attributes=attrs, vgrid=[1] * len(dimensions))
 
 
 class TimedSchemaParams:
@@ -255,16 +210,12 @@ class TimedSchemaParams:
             return dims, dtype
 
         @classmethod
-        def _insert_time_attribute(
-            cls, attrs: List[AttributeSchema], dimensions: List[DimensionSchema]
-        ) -> None:
+        def _insert_time_attribute(cls, attrs: List[AttributeSchema], dimensions: List[DimensionSchema]) -> None:
             for d in dimensions:
                 if isinstance(d, TimeDimensionSchema):
                     if isinstance(d.start_value, str):
                         primary = random.choice([True, False])
-                        time_attr = AttributeSchema(
-                            **attributes_schema_params(primary=primary, name=d.name)
-                        )
+                        time_attr = AttributeSchema(**attributes_schema_params(primary=primary, name=d.name))
                         attrs.insert(random.randint(0, len(attrs)), time_attr)
                         break
 
@@ -415,9 +366,7 @@ class TimedVArraySchemaParams:
             create_as_list=False,
         ):
             dims, dtype = ArraySchemaParamsNoTime._get_dims_dtype()
-            time_dimension = TimeDimensionSchema(
-                name="dt", size=3, start_value=start_value, step=timedelta(days=10)
-            )
+            time_dimension = TimeDimensionSchema(name="dt", size=3, start_value=start_value, step=timedelta(days=10))
             dims.append(time_dimension)  # type: ignore[arg-type]
             attrs = []
             if primary is not None:
@@ -449,9 +398,7 @@ class TimedVArraySchemaParams:
 
             :return:
             """
-            return cls.__make_schema_with_attributes(
-                start_value="$dt", primary=True, create_as_list=create_as_list
-            )
+            return cls.__make_schema_with_attributes(start_value="$dt", primary=True, create_as_list=create_as_list)
 
         @classmethod
         def start_value_string_custom_attrs(cls, create_as_list: bool = False) -> VArraySchema:
@@ -460,9 +407,7 @@ class TimedVArraySchemaParams:
 
             :return:
             """
-            return cls.__make_schema_with_attributes(
-                start_value="$dt", primary=False, create_as_list=create_as_list
-            )
+            return cls.__make_schema_with_attributes(start_value="$dt", primary=False, create_as_list=create_as_list)
 
         @classmethod
         def start_value_datetime_no_extra_attrs(cls, create_as_list: bool = False) -> VArraySchema:
@@ -473,9 +418,7 @@ class TimedVArraySchemaParams:
             )
 
         @classmethod
-        def start_value_datetime_primary_attributes(
-            cls, create_as_list: bool = False
-        ) -> VArraySchema:
+        def start_value_datetime_primary_attributes(cls, create_as_list: bool = False) -> VArraySchema:
             return cls.__make_schema_with_attributes(
                 start_value=datetime.now(ZoneInfo("UTC")),
                 primary=True,
@@ -483,9 +426,7 @@ class TimedVArraySchemaParams:
             )
 
         @classmethod
-        def start_value_datetime_custom_attributes(
-            cls, create_as_list: bool = False
-        ) -> VArraySchema:
+        def start_value_datetime_custom_attributes(cls, create_as_list: bool = False) -> VArraySchema:
             return cls.__make_schema_with_attributes(
                 start_value=datetime.now(ZoneInfo("UTC")),
                 primary=False,
@@ -497,9 +438,7 @@ class TypedSchemaParams:
     """Provides functionality to generate list with different types"""
 
     @classmethod
-    def _generate_types(
-        cls, base_dict: dict, key: str, *, exception_types: List[type] = None
-    ) -> List[dict]:
+    def _generate_types(cls, base_dict: dict, key: str, *, exception_types: List[type] = None) -> List[dict]:
         """Generates different types.
 
         :param base_dict: Dict with fixed values

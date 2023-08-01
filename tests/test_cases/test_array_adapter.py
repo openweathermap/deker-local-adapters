@@ -17,7 +17,7 @@ from deker.errors import DekerArrayError, DekerArrayTypeError, DekerValidationEr
 from deker.schemas import ArraySchema, DimensionSchema
 from deker.tools import create_array_from_meta, get_paths
 
-from deker_local_adapters import LocalArrayAdapter, AdaptersFactory
+from deker_local_adapters import AdaptersFactory, LocalArrayAdapter
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 
@@ -330,10 +330,7 @@ class TestArrayAdapter:
         main_tree, rest = array_with_attributes.id.split("-", 1)
         main_tree = os.path.sep.join((s for s in main_tree))
         main_path = (
-            array_with_attributes._adapter.collection_path
-            / array_with_attributes._adapter.data_dir
-            / main_tree
-            / rest
+            array_with_attributes._adapter.collection_path / array_with_attributes._adapter.data_dir / main_tree / rest
         )
 
         sym_path = (
@@ -342,9 +339,7 @@ class TestArrayAdapter:
             / str(array_with_attributes.primary_attributes.get("primary_attribute"))
         )
 
-        adapter_paths = get_paths(
-            array_with_attributes, array_with_attributes._adapter.collection_path
-        )
+        adapter_paths = get_paths(array_with_attributes, array_with_attributes._adapter.collection_path)
 
         assert adapter_paths.main == main_path
         assert adapter_paths.symlink == sym_path
