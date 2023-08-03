@@ -20,4 +20,5 @@ pytest-random-order
 pytest-sugar
 ssort
 
-deker==1.0.0
+--extra-index https://test.pypi.org/simple/
+deker==1.1.0b
