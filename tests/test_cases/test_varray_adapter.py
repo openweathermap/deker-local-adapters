@@ -8,7 +8,7 @@ import pytest
 from deker.arrays import VArray
 from deker.collection import Collection
 from deker.errors import DekerArrayError, DekerValidationError
-from deker.tools import create_array_from_meta, get_paths
+from deker.tools import get_paths
 from deker_tools.path import is_empty
 
 from deker_local_adapters import LocalVArrayAdapter
@@ -132,7 +132,7 @@ class TestVArrayAdapterMethods:
         adapter.update_meta_custom_attributes(varray_with_attributes, new_custom_attributes)
         assert varray_with_attributes.custom_attributes == new_custom_attributes
         meta = varray_with_attributes.read_meta()
-        ar = create_array_from_meta(
+        ar = VArray._create_from_meta(
             varray_with_attributes._VArray__collection,  # type: ignore[attr-defined]
             meta,  # type: ignore[arg-type]
             varray_adapter=adapter,

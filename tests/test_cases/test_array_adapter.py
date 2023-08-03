@@ -15,7 +15,7 @@ from deker.client import Client
 from deker.collection import Collection
 from deker.errors import DekerArrayError, DekerArrayTypeError, DekerValidationError
 from deker.schemas import ArraySchema, DimensionSchema
-from deker.tools import create_array_from_meta, get_paths
+from deker.tools import get_paths
 
 from deker_local_adapters import AdaptersFactory, LocalArrayAdapter
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
@@ -354,7 +354,7 @@ class TestArrayAdapter:
         adapter.update_meta_custom_attributes(array_with_attributes, new_custom_attributes)
         assert array_with_attributes.custom_attributes == new_custom_attributes
         meta = array_with_attributes.read_meta()
-        ar = create_array_from_meta(
+        ar = Array._create_from_meta(
             array_with_attributes._Array__collection,  # type: ignore[attr-defined]
             meta,  # type: ignore[arg-type]
             array_with_attributes._adapter,
