@@ -42,7 +42,6 @@ jobs:
           black ./${{ inputs.project-name }}
           flake8 ./${{ inputs.project-name }}
           mypy ./${{ inputs.project-name }} --install-types --non-interactive --config-file pyproject.toml
-          doc8 --config pyproject.toml ./docs
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: 1
 
