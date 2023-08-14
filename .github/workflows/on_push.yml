@@ -10,7 +10,7 @@ env:
 
 jobs:
   checks:
-    uses: openweathermap/deker-actions/.github/workflows/checks.yml@master
+    uses: openweathermap/deker-actions/.github/workflows/tox.yml@master
     with:
       python-version: "3.9"
       project-name: ${{ env.PACKAGE_NAME }}
