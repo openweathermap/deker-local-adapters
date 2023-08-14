@@ -1,4 +1,4 @@
-name: push
+name: Py3.11 checks
 
 on:
   workflow_call:

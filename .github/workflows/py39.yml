@@ -1,4 +1,4 @@
-name: push
+name: Py3.9 checks
 
 on:
   workflow_call:
@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Create python environment
-        uses: ./.github/workflows/reusable/create_environment.yml
+        uses: ./.github/workflows/reusable/create_environment.yml@ci_refactoring
         with:
           python-version: ${{ env.PYTHON_IMAGE }}
 

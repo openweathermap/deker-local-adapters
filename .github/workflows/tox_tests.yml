@@ -1,5 +1,7 @@
+name: Tox_tests
+
 on:
-workflow_call:
+  workflow_call:
 
 jobs:
   py39_checks:

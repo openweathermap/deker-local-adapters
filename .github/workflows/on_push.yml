@@ -23,4 +23,4 @@ jobs:
 
 
       - name: Make checks on py-3.9
-        uses: ./.github/workflows/py39.yml
+        uses: ./.github/workflows/py39.yml@ci_refactoring
