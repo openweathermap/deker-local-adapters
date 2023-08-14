@@ -11,6 +11,8 @@ jobs:
     steps:
       - name: Checkout code
         uses: actions/checkout@v3
+
+      - name: List repo
         run: ls
 
       - name: Make checks on py-3.9
