@@ -2,16 +2,20 @@ name: Py3.9 checks
 
 on:
   workflow_call:
-
-env:
-  PYTHON_IMAGE: 3.9
-  PYTHON_PACKAGE_NAME: deker_local_adapters
+    inputs:
+      python-version:
+        required: true
+        type: string
+      project-name:
+        required: false
+        type: string
+        default: deker_local_adapters
 
 jobs:
   setup:
     uses: ./.github/workflows/create_environment.yml
     with:
-      python-version: ${{ env.PYTHON_IMAGE }}
+      python-version: ${{ inputs.python-version }}
 
   linters:
     needs: setup
@@ -23,21 +27,21 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v3
         with:
-          python-version: ${{ env.PYTHON_IMAGE }}
+          python-version: ${{ inputs.python-version }}
 
       - name: Load virtual environment
         uses: actions/cache@v2
         with:
           path: .venv
-          key: ${{ runner.os }}-venv-${{ env.PYTHON_IMAGE }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
+          key: ${{ runner.os }}-venv-${{ inputs.python-version }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
 
       - name: Run linters and checks
         run: |
           source .venv/bin/activate
-          isort ./${{ env.PYTHON_PACKAGE_NAME }}
-          black ./${{ env.PYTHON_PACKAGE_NAME }}
-          flake8 ./${{ env.PYTHON_PACKAGE_NAME }}
-          mypy ./${{ env.PYTHON_PACKAGE_NAME }} --install-types --non-interactive --config-file pyproject.toml
+          isort ./${{ inputs.project-name }}
+          black ./${{ inputs.project-name }}
+          flake8 ./${{ inputs.project-name }}
+          mypy ./${{ inputs.project-name }} --install-types --non-interactive --config-file pyproject.toml
           doc8 --config pyproject.toml ./docs
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: 1
@@ -59,13 +63,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v3
         with:
-          python-version: ${{ env.PYTHON_IMAGE }}
+          python-version: ${{ inputs.python-version }}
 
       - name: Load virtual environment
         uses: actions/cache@v2
         with:
           path: .venv
-          key: ${{ runner.os }}-venv-${{ env.PYTHON_IMAGE }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
+          key: ${{ runner.os }}-venv-${{ inputs.python-version }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
 
       - name: Run shuffled tests
         run: |
@@ -91,13 +95,13 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v3
         with:
-          python-version: ${{ env.PYTHON_IMAGE }}
+          python-version: ${{ inputs.python-version }}
 
       - name: Load virtual environment
         uses: actions/cache@v2
         with:
           path: .venv
-          key: ${{ runner.os }}-venv-${{ env.PYTHON_IMAGE }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
+          key: ${{ runner.os }}-venv-${{ inputs.python-version }}-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
 
       - name: Run coverage
         run: |
