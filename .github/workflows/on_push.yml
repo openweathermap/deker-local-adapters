@@ -8,3 +8,5 @@ on:
 jobs:
   py39_checks:
     uses: ./.github/workflows/py39.yml
+    with:
+      python-version: 3.9
