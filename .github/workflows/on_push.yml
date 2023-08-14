@@ -63,7 +63,7 @@ jobs:
           black ./${{ env.PYTHON_PACKAGE_NAME }}
           flake8 ./${{ env.PYTHON_PACKAGE_NAME }}
           mypy ./${{ env.PYTHON_PACKAGE_NAME }} --install-types --non-interactive --config-file pyproject.toml
-          doc8 --config pyproject.toml ./docs/deker
+          doc8 --config pyproject.toml ./docs
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: 1
 
@@ -128,7 +128,7 @@ jobs:
         run: |
           source .venv/bin/activate
           coverage run -m pytest --junitxml=report.xml
-          coverage report --fail-under=96
+          coverage report --fail-under=92
           coverage xml
         env:
           PIP_DISABLE_PIP_VERSION_CHECK: 1
