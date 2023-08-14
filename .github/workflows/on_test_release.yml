@@ -7,43 +7,12 @@ on:
 
 jobs:
   tox_tests:
-    runs-on: ubuntu-latest
-    container:
-      image: ghcr.io/openweathermap/deker/deker-embedded/tox:latest
-      env:
-        PACKAGE_VERSION: ${{ github.REF_NAME }}
-      credentials:
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - name: Set python versions
-        run:  pyenv global 3.9 3.10 3.11
-
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Install tools
-        run: |
-          env
-          pip install tox poetry
-        env:
-          PIP_DISABLE_PIP_VERSION_CHECK: 1
-
-      - name: Make requirements file
-        run: |
-          poetry export --with dev --without-hashes > requirements.txt
-          cat requirements.txt
-
-      - name: Run tox tests
-        run: |
-          export PIP_EXTRA_INDEX_URL=https://test.pypi.org/simple
-          env
-          tox
-        env:
-          PIP_DISABLE_PIP_VERSION_CHECK: 1
-          PACKAGE_VERSION: ${{ github.REF_NAME }}
+      - name: Create python environment
+        uses: ./.github/workflows/reusable/tox_tests.yml
 
   build_sdist:
+    needs: tox_tests
     name: Build source distribution
     runs-on: ubuntu-latest
     steps:

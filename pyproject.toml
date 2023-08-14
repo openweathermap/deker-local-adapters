@@ -384,7 +384,7 @@ env_list = {py39,py310,py311}-lint, py{39,310,311}-test
 [testenv:{py39,py310,py311}-test]
 description = run unit tests
 deps =
-    - r requirements.txt
+    -r requirements.txt
 
 commands =
     coverage run -m pytest {posargs:tests} --random-order
@@ -397,7 +397,7 @@ set_env =
 ignore_base_python_conflict = true
 description = run linters
 deps =
-    - r requirements.txt
+    -r requirements.txt
 
 commands = ssort  {posargs:deker_local_adapters}
            isort {posargs:deker_local_adapters}
