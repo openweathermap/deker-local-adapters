@@ -7,5 +7,4 @@ on:
 
 jobs:
   checks:
-    runs-on: ubuntu-latest
     uses: ./.github/workflows/tox_tests.yml
