@@ -7,7 +7,7 @@ on:
 
 jobs:
   checks:
-    uses: openweather/deker-actions/.github/workflows/tox.yml@master
+    uses: openweather/deker-actions/.github/workflows/tox.yml
 
   build_docs:
     needs: checks
