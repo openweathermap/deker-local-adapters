@@ -13,7 +13,7 @@ jobs:
     uses: openweathermap/deker-actions/.github/workflows/tox.yml@master
     with:
       python-version: "3.9"
-      project-name: ${{ env.PACKAGE_NAME }}
+      project-name: $PACKAGE_NAME
 
 
   build_docs:
