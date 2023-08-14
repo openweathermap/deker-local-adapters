@@ -9,9 +9,6 @@ jobs:
   py39_checks:
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
       - name: List repo
         run: |
           pwd
@@ -20,6 +17,9 @@ jobs:
           pwd
           ls
           ls -R .github
+          cd ..
+          pwd
+          ls
 
 
       - name: Make checks on py-3.9
