@@ -13,13 +13,10 @@ jobs:
         run: |
           pwd
           ls
-          cd deker_local_adapters
-          pwd
-          ls
-          ls -R .github
+          ls -R .
           cd ..
           pwd
-          ls
+          ls -R .
 
 
       - name: Make checks on py-3.9
