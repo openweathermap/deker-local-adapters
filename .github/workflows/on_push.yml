@@ -14,6 +14,7 @@ jobs:
     with:
       python-version: "3.9"
       project-name: ${{ env.PACKAGE_NAME }}
+    secrets: inherit
 
 
   build_docs:
