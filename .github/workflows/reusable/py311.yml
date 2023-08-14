@@ -4,11 +4,12 @@ on:
   workflow_call:
 
 env:
-  PYTHON_IMAGE: 3.10
+  PYTHON_IMAGE: 3.11
   PYTHON_PACKAGE_NAME: deker_local_adapters
 
 jobs:
   setup:
+    runs-on: ubuntu-latest
     timeout-minutes: 60
     steps:
       - name: Create python environment
