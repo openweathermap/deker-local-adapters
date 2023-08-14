@@ -30,7 +30,9 @@ jobs:
           PIP_DISABLE_PIP_VERSION_CHECK: 1
 
       - name: Make requirements file
-        run: poetry export --without-hashes > requirements.txt
+        run: |
+          poetry export --without-hashes > requirements.txt
+          cat requirements.txt
 
       - name: Run tox tests
         run: |
