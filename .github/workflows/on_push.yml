@@ -8,7 +8,7 @@ on:
 jobs:
   py39_checks:
     runs-on: ubuntu-latest
-    steps:
+    jobs:
       - name: Checkout code
         uses: actions/checkout@v3
         with:
