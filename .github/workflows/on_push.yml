@@ -7,32 +7,7 @@ on:
 
 jobs:
   checks:
-    uses: openweathermap/deker-actions/.github/workflows/tox.yml@master
+    uses: openweathermap/deker-actions/.github/workflows/checks.yml@master
     with:
-      project-name: deker_local_adapters
-
-  build_docs:
-    needs: checks
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout code
-        uses: actions/checkout@v3
-
-      - name: Load virtual environment
-        uses: actions/cache@v2
-        with:
-          path: .venv
-          key: ${{ runner.os }}-venv-3.9-${{ hashFiles('pyproject.toml', 'poetry.lock') }}
-
-      - name: Install dependencies
-        run: |
-          source .venv/bin/activate
-          doc8 --config pyproject.toml docs
-          cd ./docs
-          make html
-          awk 'NR >= 35 && NR <= 40' _build/html/index.html
-
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v2
-        with:
-          path: docs/_build/html
+      package-name: deker_local_adapters
+      python-version: '3.9'
