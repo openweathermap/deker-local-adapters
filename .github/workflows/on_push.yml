@@ -20,4 +20,4 @@ jobs:
 
 
       - name: Make checks on py-3.9
-        uses: openweathermap/deker-local-adapters/.github/workflows/reusable/py39.yml
+        uses: openweathermap/deker-local-adapters/.github/workflows/py39.yml
