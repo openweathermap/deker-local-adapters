@@ -1,4 +1,4 @@
-name: Py3.9 checks
+name: checks
 
 on:
   workflow_call:
