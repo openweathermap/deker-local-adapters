@@ -9,7 +9,7 @@ env:
 
 jobs:
   setup:
-    uses: ./.github/workflows/reusable/create_environment.yml
+    uses: ./.github/workflows/create_environment.yml
     with:
       python-version: ${{ env.PYTHON_IMAGE }}
 
