@@ -143,3 +143,11 @@ repos:
         always_run: false
         stages:
           - push
+
+      - id: doc8
+        name: doc8
+        entry: doc8 --config=pyproject.toml docs
+        language: python
+        always_run: true
+        stages:
+          - commit
