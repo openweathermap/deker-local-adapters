@@ -10,9 +10,9 @@ env:
 
 jobs:
   checks:
-    uses: openweathermap/deker-actions/.github/workflows/checks.yml@v1
+    uses: openweathermap/deker-actions/.github/workflows/setup.yml@master
     with:
-      python-version: 3.9
+      python-version: "3.9"
       project-name: ${{ env.PACKAGE_NAME }}
 
 
