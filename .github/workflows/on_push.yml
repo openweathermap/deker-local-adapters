@@ -5,15 +5,11 @@ on:
     branches-ignore:
       - 'refs/tags/v'
 
-env:
-  PACKAGE_NAME: deker_local_adapters
-
 jobs:
   checks:
     uses: openweathermap/deker-actions/.github/workflows/tox.yml@master
     with:
-      project-name: $PACKAGE_NAME
-
+      project-name: deker_local_adapters
 
   build_docs:
     needs: checks

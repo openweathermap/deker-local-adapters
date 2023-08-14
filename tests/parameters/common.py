@@ -25,7 +25,6 @@ NumericDtypes = [
     numpy.complex128,
     numpy.complex256,
     numpy.longcomplex,
-    numpy.compat.long,
     numpy.longlong,
 ]
 
