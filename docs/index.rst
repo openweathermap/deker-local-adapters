@@ -1,8 +1,10 @@
 Deker local adapters
 ====================
 
-Deker local adapters provide file storage support for Deker, enabling the storage and management of numeric data on the local file system.
-The module supports storage in the HDF5 file format and allows configuring HDF chunks and compression.
+Deker local adapters provide file storage support for Deker, enabling the storage and management
+of numeric data on the local file system.
+The module supports storage in the HDF5 file format and allows configuring HDF chunks and
+compression.
 
 Modules
 -------

@@ -78,13 +78,13 @@ repos:
           - commit
 
   - repo: https://github.com/hadialqattan/pycln
-    rev: v2.1.5 # Possible releases: https://github.com/hadialqattan/pycln/releases
+    rev: v2.2.2 # Possible releases: https://github.com/hadialqattan/pycln/releases
     hooks:
       - id: pycln
         args: [ --config=pyproject.toml ]
 
   - repo: https://github.com/psf/black
-    rev: 23.3.0  # Possible releases: https://github.com/psf/black/releases
+    rev: 23.7.0  # Possible releases: https://github.com/psf/black/releases
     hooks:
       - id: black
         always_run: false
@@ -108,7 +108,7 @@ repos:
           - commit
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.4.1  # Possible releases: https://github.com/python/mypy/tags
+    rev: v1.5.0  # Possible releases: https://github.com/python/mypy/tags
     hooks:
       - id: mypy
         name: mypy
