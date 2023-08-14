@@ -25,7 +25,7 @@ jobs:
       - name: Install dependencies
         run: |
           source .venv/bin/activate
-          doc8 --config pyproject.toml docs/deker
+          doc8 --config pyproject.toml docs
           cd ./docs
           make html
           awk 'NR >= 35 && NR <= 40' _build/html/index.html
