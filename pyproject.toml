@@ -82,7 +82,7 @@ pytest-random-order = "1.1.0"
 pytest-mock = "3.10.0"
 tox = "4.6.3"
 #deker = "1.1.0"
-deker = "1.1.0b-3"
+deker = "1.1.0b-4"
 
 [tool.poetry.group.docs.dependencies]
 docutils = "0.17"
