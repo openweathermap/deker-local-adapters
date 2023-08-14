@@ -7,4 +7,4 @@ on:
 
 jobs:
   checks:
-    uses: ./.github/workflows/reusable/tox_tests.yml
+    uses: ./.github/workflows/tox_tests.yml

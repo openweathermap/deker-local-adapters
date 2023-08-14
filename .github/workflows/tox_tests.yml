@@ -7,20 +7,20 @@ jobs:
   py39_checks:
     steps:
       - name: Make checks on py-3.9
-        uses: ./.github/workflows/reusable/checks.yml
+        uses: ./.github/workflows/checks.yml
         with:
           python-version: 3.9
 
   py310_checks:
     steps:
       - name: Make checks on py-3.10
-        uses: ./.github/workflows/reusable/checks.yml
+        uses: ./.github/workflows/checks.yml
         with:
           python-version: 3.10
 
   py311_checks:
     steps:
       - name: Make checks on py-3.11
-        uses: ./.github/workflows/reusable/checks.yml
+        uses: ./.github/workflows/checks.yml
         with:
           python-version: 3.11

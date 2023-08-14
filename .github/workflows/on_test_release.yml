@@ -9,7 +9,7 @@ jobs:
   tox_tests:
     steps:
       - name: Create python environment
-        uses: ./.github/workflows/reusable/tox_tests.yml
+        uses: ./.github/workflows/tox_tests.yml
 
   build_sdist:
     needs: tox_tests
