@@ -10,12 +10,9 @@ env:
 jobs:
   setup:
     timeout-minutes: 60
-    runs-on: ubuntu-latest
-    steps:
-      - name: Create python environment
-        uses: ./.github/workflows/reusable/create_environment.yml@ci_refactoring
-        with:
-          python-version: ${{ env.PYTHON_IMAGE }}
+    uses: ./.github/workflows/reusable/create_environment.yml
+    with:
+      python-version: ${{ env.PYTHON_IMAGE }}
 
   linters:
     needs: setup
