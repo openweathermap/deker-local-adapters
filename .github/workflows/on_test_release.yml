@@ -31,7 +31,7 @@ jobs:
 
       - name: Make requirements file
         run: |
-          poetry export --without-hashes > requirements.txt
+          poetry export --with dev --without-hashes > requirements.txt
           cat requirements.txt
 
       - name: Run tox tests
