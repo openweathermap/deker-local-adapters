@@ -3,19 +3,16 @@ workflow_call:
 
 jobs:
   py39_checks:
-    timeout-minutes: 60
     steps:
       - name: Make checks on py-3.9
         uses: ./.github/workflows/reusable/py39.yml
 
   py310_checks:
-    timeout-minutes: 60
     steps:
       - name: Make checks on py-3.10
         uses: ./.github/workflows/reusable/py310.yml
 
   py311_checks:
-    timeout-minutes: 60
     steps:
       - name: Make checks on py-3.11
         uses: ./.github/workflows/reusable/py311.yml

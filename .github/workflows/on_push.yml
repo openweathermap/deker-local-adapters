@@ -7,7 +7,6 @@ on:
 
 jobs:
   py39_checks:
-    timeout-minutes: 60
     steps:
       - name: Make checks on py-3.9
         uses: ./.github/workflows/reusable/py39.yml
