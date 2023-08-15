@@ -14,16 +14,8 @@ jobs:
       with:
         package-name: $PACKAGE_NAME
 
-  build_docs:
-    needs: tox_tests
-    uses: openweathermap/deker-actions/.github/workflows/doc_build.yml@master
-
-  publish_docs:
-    needs: build_docs
-    uses: openweathermap/deker-actions/.github/workflows/doc_publish.yml@master
-
   build_sdist:
-    needs: [tox_tests, build_docs]
+    needs: tox_tests
     name: Build source distribution
     uses: openweathermap/deker-actions/.github/workflows/build.yml@master
 
