@@ -36,7 +36,7 @@ def local_array_adapter(array_collection: Collection, ctx: CTX) -> LocalArrayAda
         collection_options=array_collection.options,
         ctx=ctx,
         storage_adapter=HDF5StorageAdapter,
-        executor=ThreadPoolExecutor(workers=1),
+        executor=ThreadPoolExecutor(max_workers=1),
     )
 
 
