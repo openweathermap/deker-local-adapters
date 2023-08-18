@@ -6,9 +6,8 @@ on:
       - 'refs/tags/v'
 
 jobs:
-  checks:
-    uses: openweathermap/deker-actions/.github/workflows/checks.yml@master
+  tox:
+    uses: openweathermap/deker-actions/.github/workflows/tox.yml@master
     with:
-      package-name: deker_local_adapters
-      python-version: '3.9'
+      package-name: ${{ vars.PACKAGE_NAME }}
       min-coverage: 92
