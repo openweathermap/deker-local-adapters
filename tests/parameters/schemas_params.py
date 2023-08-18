@@ -3,11 +3,11 @@ import random
 from datetime import datetime, timedelta
 from types import NoneType
 from typing import Any, List, Tuple, Type, Union
+from zoneinfo import ZoneInfo
 
 from deker.ABC.base_schemas import BaseDimensionSchema
 from deker.schemas import ArraySchema, AttributeSchema, DimensionSchema, TimeDimensionSchema, VArraySchema
 from deker.types import Numeric, Scale
-from zoneinfo import ZoneInfo
 
 from tests.parameters.common import INTEG, NumericDtypes, _random_positive_int, random_step, random_string
 

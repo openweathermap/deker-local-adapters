@@ -1,0 +1,13 @@
+name: push
+
+on:
+  push:
+    branches-ignore:
+      - 'refs/tags/v'
+
+jobs:
+  tox:
+    uses: openweathermap/deker-actions/.github/workflows/tox.yml@master
+    with:
+      package-name: ${{ vars.PACKAGE_NAME }}
+      min-coverage: 92

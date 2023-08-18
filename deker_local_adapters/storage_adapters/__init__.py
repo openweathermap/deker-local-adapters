@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+# nopycln: file
 from .hdf5 import (
     HDF5BuiltinCompressionStringOptions,
     HDF5ChunksOptions,

@@ -27,7 +27,7 @@ from deker.errors import DekerArrayError
 from deker.locks import CreateArrayLock, ReadArrayLock, WriteArrayLock
 from deker.log import SelfLoggerMixin
 from deker.schemas import AttributeSchema
-from deker.tools import create_array_from_meta, get_main_path, get_symlink_path
+from deker.tools import get_main_path, get_symlink_path
 from deker.tools.decorators import check_ctx_state
 from deker.types import ArrayMeta, Numeric, Slice
 from numpy import ndarray
@@ -226,7 +226,7 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
         try:
             metas = self.executor.map(self.read_meta, self._adapter_iter(vid))
             if metas:
-                arrays = [create_array_from_meta(collection, meta, self) for meta in metas]
+                arrays = [Array._create_from_meta(collection, meta, self) for meta in metas]
                 list(self.executor.map(_delete, arrays))
         except Exception as e:
             self.logger.exception(e)

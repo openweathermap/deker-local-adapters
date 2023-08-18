@@ -19,10 +19,11 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from logging import Logger
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator, Optional, Tuple
+from typing import TYPE_CHECKING, Generator, Optional, Tuple, Union
 
+from deker.arrays import Array, VArray
 from deker.errors import DekerArrayError, DekerValidationError
-from deker.tools import create_array_from_meta, get_main_path, get_paths, get_symlink_path
+from deker.tools import get_main_path, get_paths, get_symlink_path
 from deker.tools.decorators import check_ctx_state
 from deker.types import ArrayMeta
 from deker_tools.path import is_empty
@@ -138,7 +139,7 @@ class LocalAdapterMixin(object):
         collection: "Collection",
         array_adapter: "BaseArrayAdapter",
         varray_adapter: "BaseVArrayAdapter",
-    ) -> "BaseArray":
+    ) -> Union[Array, VArray]:
         """Read meta and make an array/varray object from it.
 
         :param path: Path to meta
@@ -148,7 +149,10 @@ class LocalAdapterMixin(object):
         """
         meta = self.read_meta(path)  # type: ignore[attr-defined]
 
-        array = create_array_from_meta(collection, meta, array_adapter, varray_adapter)
+        if varray_adapter:
+            array = VArray._create_from_meta(collection, meta, array_adapter, varray_adapter)
+        else:
+            array = Array._create_from_meta(collection, meta, array_adapter, varray_adapter)
         return array
 
     def get_by_primary_attributes(
