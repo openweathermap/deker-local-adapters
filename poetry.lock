@@ -444,32 +444,27 @@ optimize = ["orjson"]
 
 [[package]]
 name = "deker"
-version = "1.1.0b5"
+version = "1.1.0"
 description = "Multidimensional arrays storage engine"
 optional = false
 python-versions = ">=3.9,<4.0"
 files = [
-    {file = "deker-1.1.0b5.tar.gz", hash = "sha256:c86746db05de53e9146b633875a31cdded2a047b46cca7d12bd4b7d4916c9c32"},
+    {file = "deker-1.1.0.tar.gz", hash = "sha256:a92ecd4168ab98bf82edb1e4ad07c72b7527806c8e74fab51cfd9a888da567b3"},
 ]
 
 [package.dependencies]
 attrs = ">=23.1.0,<24.0.0"
-deker-local-adapters = ">=1.0.1b2,<2.0.0"
+deker-local-adapters = "1.0.1"
 numpy = ">=1.18,<2.0"
 psutil = ">=5.9.5,<6.0.0"
 tqdm = ">=4.64.1,<5.0.0"
 typing-extensions = ">=4.4.0,<5.0.0"
 
 [package.extras]
-all = ["deker-server-adapters (>=1.0.0rc0,<2.0.0)", "deker-shell (>=1.0.0,<2.0.0)", "xarray (>=2023.5.0,<2024.0.0)"]
-server-adapters = ["deker-server-adapters (>=1.0.0rc0,<2.0.0)"]
+all = ["deker-server-adapters (>=1.0.0,<2.0.0)", "deker-shell (>=1.0.0,<2.0.0)", "xarray (>=2023.5.0,<2024.0.0)"]
+server-adapters = ["deker-server-adapters (>=1.0.0,<2.0.0)"]
 shell = ["deker-shell (>=1.0.0,<2.0.0)"]
 xarray = ["xarray (>=2023.5.0,<2024.0.0)"]
-
-[package.source]
-type = "legacy"
-url = "https://test.pypi.org/simple"
-reference = "testpypi"
 
 [[package]]
 name = "deker-tools"
@@ -1745,17 +1740,17 @@ files = [
 
 [[package]]
 name = "setuptools"
-version = "68.1.0"
+version = "68.1.2"
 description = "Easily download, build, install, upgrade, and uninstall Python packages"
 optional = false
 python-versions = ">=3.8"
 files = [
-    {file = "setuptools-68.1.0-py3-none-any.whl", hash = "sha256:e13e1b0bc760e9b0127eda042845999b2f913e12437046e663b833aa96d89715"},
-    {file = "setuptools-68.1.0.tar.gz", hash = "sha256:d59c97e7b774979a5ccb96388efc9eb65518004537e85d52e81eaee89ab6dd91"},
+    {file = "setuptools-68.1.2-py3-none-any.whl", hash = "sha256:3d8083eed2d13afc9426f227b24fd1659489ec107c0e86cec2ffdde5c92e790b"},
+    {file = "setuptools-68.1.2.tar.gz", hash = "sha256:3d4dfa6d95f1b101d695a6160a7626e15583af71a5f52176efa5d39a054d475d"},
 ]
 
 [package.extras]
-docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "pygments-github-lexers (==0.0.5)", "rst.linker (>=1.9)", "sphinx (>=3.5)", "sphinx-favicon", "sphinx-hoverxref (<2)", "sphinx-inline-tabs", "sphinx-lint", "sphinx-notfound-page (==0.8.3)", "sphinx-reredirects", "sphinxcontrib-towncrier"]
+docs = ["furo", "jaraco.packaging (>=9.3)", "jaraco.tidelift (>=1.4)", "pygments-github-lexers (==0.0.5)", "rst.linker (>=1.9)", "sphinx (>=3.5,<=7.1.2)", "sphinx-favicon", "sphinx-hoverxref (<2)", "sphinx-inline-tabs", "sphinx-lint", "sphinx-notfound-page (==0.8.3)", "sphinx-reredirects", "sphinxcontrib-towncrier"]
 testing = ["build[virtualenv]", "filelock (>=3.4.0)", "flake8-2020", "ini2toml[lite] (>=0.9)", "jaraco.develop (>=7.21)", "jaraco.envs (>=2.2)", "jaraco.path (>=3.2.0)", "pip (>=19.1)", "pytest (>=6)", "pytest-black (>=0.3.7)", "pytest-checkdocs (>=2.4)", "pytest-cov", "pytest-enabler (>=2.2)", "pytest-mypy (>=0.9.1)", "pytest-perf", "pytest-ruff", "pytest-timeout", "pytest-xdist", "tomli-w (>=1.0.0)", "virtualenv (>=13.0.0)", "wheel"]
 testing-integration = ["build[virtualenv]", "filelock (>=3.4.0)", "jaraco.envs (>=2.2)", "jaraco.path (>=3.2.0)", "pytest", "pytest-enabler", "pytest-xdist", "tomli", "virtualenv (>=13.0.0)", "wheel"]
 
@@ -2287,4 +2282,4 @@ testing = ["big-O", "jaraco.functools", "jaraco.itertools", "more-itertools", "p
 [metadata]
 lock-version = "2.0"
 python-versions = "^3.9"
-content-hash = "579b17e6fe3d795d563347de96a71b820ccc22d3b5fdbfa7bfc7a0e40e631716"
+content-hash = "8e77b49fd186ca36227f841df899652b64c4ccbef1b57079a02f07fc6cebb81c"
