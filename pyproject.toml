@@ -32,6 +32,7 @@ classifiers = [
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
 ]
 
 [tool.poetry-dynamic-versioning]
@@ -54,11 +55,10 @@ priority = "supplemental"
                                 ####################
 
 [tool.poetry.dependencies]
-python = "^3.9"
-numpy = "^1.18"
+python = ">=3.9,<3.13"
 h5py = "^3.8.0"
 hdf5plugin = "^4.0.1"
-deker-tools= "1.0.0"
+deker-tools= { version = "1.1.0b", source = "testpypi" }
 
 [tool.poetry.group.dev.dependencies]
 black = "23.1.0"
@@ -85,6 +85,7 @@ pytest-sugar = "0.9.6"
 pytest-random-order = "1.1.0"
 pytest-mock = "3.10.0"
 deker = "1.1.0"
+redis = {version = "*", optional = true, extras = ["hiredis"]}
 
 [tool.poetry.group.docs.dependencies]
 docutils = "0.17"
