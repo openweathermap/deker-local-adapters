@@ -19,3 +19,6 @@ from deker.errors import DekerBaseApplicationError
 
 class DekerStorageError(DekerBaseApplicationError):
     """If a problem appears in storage adapter."""
+
+class DekerBrokenSymlinkError(DekerBaseApplicationError):
+    """If there is no file with that symlink."""
