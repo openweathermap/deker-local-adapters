@@ -28,6 +28,8 @@ from deker.tools.decorators import check_ctx_state
 from deker.types import ArrayMeta
 from deker_tools.path import is_empty
 
+from deker_local_adapters.errors import DekerBrokenSymlinkError
+
 
 if TYPE_CHECKING:
     from deker.ABC import BaseArray, BaseArraysSchema
@@ -186,6 +188,9 @@ class LocalAdapterMixin(object):
                     path = Path(symlinks_path) / array_name
                     self.logger.debug(f"filtered {path}")  # type: ignore[attr-defined]
                     return self._init_array(path, collection, array_adapter, varray_adapter)
+                # If symlink is broken
+                elif file.is_symlink() and not file.is_file():
+                    raise DekerBrokenSymlinkError(f"Seems like {file} is a broken symlink.")
         except FileNotFoundError:
             self.logger.debug("nothing was filtered")  # type: ignore[attr-defined]
 
