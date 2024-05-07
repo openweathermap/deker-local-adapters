@@ -27,7 +27,7 @@ from deker.ABC.base_adapters import BaseVArrayAdapter
 from deker.arrays import VArray
 from deker.ctx import CTX
 from deker.errors import DekerArrayError
-from deker.locks import CreateArrayLock, UpdateMetaAttributeLock
+from deker.locks import UpdateMetaAttributeLock
 from deker.log import SelfLoggerMixin
 from deker.tools.decorators import check_ctx_state
 from deker.types import ArrayMeta, Numeric, Slice
@@ -69,9 +69,8 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
         raise NotImplementedError
 
     @check_ctx_state
-    @CreateArrayLock()
     def create(self, array: VArray) -> VArray:
-        """Create varray.
+        """Create a new virtual array on disk storage.
 
         :param array: VArray instance
         """
