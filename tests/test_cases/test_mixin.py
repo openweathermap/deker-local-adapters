@@ -1,8 +1,12 @@
-import pytest
 import os
-from deker_local_adapters.errors import DekerBrokenSymlinkError
-from deker_local_adapters.varray_adapter import LocalVArrayAdapter 
+
+import pytest
+
 from deker.tools.path import get_symlink_path
+
+from deker_local_adapters.errors import DekerBrokenSymlinkError
+from deker_local_adapters.varray_adapter import LocalVArrayAdapter
+
 
 @pytest.mark.parametrize("adapter_", ("local_array_adapter", "local_varray_adapter"))
 def test_broken_symlink(adapter_: str, request, local_array_adapter, local_varray_adapter):
@@ -17,7 +21,7 @@ def test_broken_symlink(adapter_: str, request, local_array_adapter, local_varra
         array = request.getfixturevalue("array_with_attributes")
         schema = request.getfixturevalue("array_schema_with_attributes")
         symlink_dir = "array_symlinks"
-        
+
     symlinks_path = get_symlink_path(
         path_to_symlink_dir=collection.path / symlink_dir,  # type: ignore[operator]
         primary_attributes_schema=schema.primary_attributes,
@@ -25,7 +29,7 @@ def test_broken_symlink(adapter_: str, request, local_array_adapter, local_varra
     )
     symlinks_path.mkdir(parents=True, exist_ok=True)
     path_for_file = symlinks_path / "test.txt"
-    
+
     path_for_file.write_text("foo")
 
     os.symlink(path_for_file, symlinks_path / "symlink")
@@ -36,6 +40,5 @@ def test_broken_symlink(adapter_: str, request, local_array_adapter, local_varra
             schema,
             collection,
             local_array_adapter,
-            local_varray_adapter if isinstance(adapter, LocalVArrayAdapter) else None
+            local_varray_adapter if isinstance(adapter, LocalVArrayAdapter) else None,
         )
-
