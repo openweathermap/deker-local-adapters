@@ -32,7 +32,7 @@ from deker_local_adapters.errors import DekerBrokenSymlinkError
 
 
 if TYPE_CHECKING:
-    from deker.ABC import BaseArray, BaseArraysSchema
+    from deker.ABC import BaseArraysSchema
     from deker.ABC.base_adapters import BaseArrayAdapter, BaseVArrayAdapter
     from deker.collection import Collection
 
@@ -71,7 +71,7 @@ class LocalAdapterMixin(object):
             pass
 
     @check_ctx_state
-    def delete(self, array: "BaseArray") -> None:
+    def delete(self, array: Union[Array, VArray]) -> None:
         """Delete the existing array.
 
         :param array: array instance
@@ -87,7 +87,7 @@ class LocalAdapterMixin(object):
             self.logger.exception(e)
             raise e
 
-    def is_deleted(self, array: "BaseArray") -> bool:
+    def is_deleted(self, array: Union[Array, VArray]) -> bool:
         """Check if the array was deleted.
 
         :param array: Array to check
@@ -97,12 +97,12 @@ class LocalAdapterMixin(object):
         return not os.path.exists(path)
 
     @check_ctx_state
-    def _get_main_path_to_file(self, array: "BaseArray") -> Path:
+    def _get_main_path_to_file(self, array: Union[Array, VArray]) -> Path:
         paths = get_paths(array, self.collection_path)
         file = array.id + self.file_ext
         return paths.main / file
 
-    def get_filenames_for_create_methods(self, array: "BaseArray") -> Tuple[Path, Path]:
+    def get_filenames_for_create_methods(self, array: Union[Array, VArray]) -> Tuple[Path, Path]:
         """Return paths to the main file and symlink.
 
         !!! DO NOT USE THIS METHOD ANYWHERE EXCEPT adapter.create !!!!
@@ -164,7 +164,7 @@ class LocalAdapterMixin(object):
         collection: "Collection",
         array_adapter: "BaseArrayAdapter",
         varray_adapter: "BaseVArrayAdapter",
-    ) -> Optional["BaseArray"]:
+    ) -> Optional[Union[Array, VArray]]:
         """Find (V)Array by given primary attributes.
 
         :param primary_attributes: Key attributes
@@ -200,7 +200,7 @@ class LocalAdapterMixin(object):
         collection: "Collection",
         array_adapter: "BaseArrayAdapter",
         varray_adapter: "BaseVArrayAdapter",
-    ) -> Optional["BaseArray"]:
+    ) -> Optional[Union[Array, VArray]]:
         """Find (V)Array by id.
 
         :param id_: Array id
