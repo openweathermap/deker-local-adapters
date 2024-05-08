@@ -69,7 +69,7 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
         raise NotImplementedError
 
     @check_ctx_state
-    def create(self, array: VArray) -> VArray:
+    def create(self, array: VArray) -> None:
         """Create a new virtual array on disk storage.
 
         :param array: VArray instance
@@ -85,7 +85,6 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
         with open(main_filename, "w", encoding="utf-8") as f:
             f.write(varray_meta)
         os.symlink(main_filename, sym_filename)
-        return array
 
     @check_ctx_state
     def read_meta(self, array: Union[VArray, Path]) -> ArrayMeta:

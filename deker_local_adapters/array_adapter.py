@@ -82,7 +82,7 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
             return None
 
     @check_ctx_state
-    def create(self, array: Array) -> Array:
+    def create(self, array: Array) -> None:
         """Create a new array on disk storage.
 
         :param array: Array instance
@@ -110,7 +110,6 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
         )
         # Create symlink
         os.symlink(main_filename, sym_filename)
-        return array
 
     @check_ctx_state
     @ReadArrayLock()
