@@ -71,7 +71,8 @@ class LocalCollectionAdapter(BaseCollectionAdapter):
         try:
             schema = collection.array_schema
             shape = schema.arrays_shape if hasattr(schema, "arrays_shape") else schema.shape
-            check_memory(shape, schema.dtype, self.ctx.config.memory_limit)
+            if not self.ctx.config.skip_memory_check:
+                check_memory(shape, schema.dtype, self.ctx.config.memory_limit)
             coll_path = self.__create_path(collection.name)
             prepared = collection.as_dict
             self.__create(coll_name=collection.name, data=prepared, coll_path=coll_path)
