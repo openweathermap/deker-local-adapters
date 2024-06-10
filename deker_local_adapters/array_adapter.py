@@ -24,7 +24,7 @@ from deker.ABC.base_adapters import BaseArrayAdapter
 from deker.arrays import Array
 from deker.ctx import CTX
 from deker.errors import DekerArrayError
-from deker.locks import CreateArrayLock, ReadArrayLock, WriteArrayLock
+from deker.locks import ReadArrayLock, WriteArrayLock
 from deker.log import SelfLoggerMixin
 from deker.schemas import AttributeSchema
 from deker.tools import get_main_path, get_symlink_path
@@ -82,9 +82,8 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
             return None
 
     @check_ctx_state
-    @CreateArrayLock()
-    def create(self, array: Array) -> Array:
-        """Create a new array.
+    def create(self, array: Array) -> None:
+        """Create a new array on disk storage.
 
         :param array: Array instance
         """
@@ -111,7 +110,6 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
         )
         # Create symlink
         os.symlink(main_filename, sym_filename)
-        return array
 
     @check_ctx_state
     @ReadArrayLock()

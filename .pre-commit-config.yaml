@@ -9,7 +9,7 @@ default_language_version:
 
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.4.0  # Possible releases: https://github.com/pre-commit/pre-commit-hooks/releases
+    rev: v4.6.0  # Possible releases: https://github.com/pre-commit/pre-commit-hooks/releases
     hooks:
       - id: no-commit-to-branch
         always_run: true
@@ -58,7 +58,7 @@ repos:
         args: [ --allow-missing-credentials ]
 
   - repo: https://github.com/bwhmather/ssort
-    rev: v0.11.6  # Possible releases: https://github.com/bwhmather/ssort/releases
+    rev: 0.13.0  # Possible releases: https://github.com/bwhmather/ssort/releases
     hooks:
       - id: ssort
         entry: ssort
@@ -67,7 +67,7 @@ repos:
           - commit
 
   - repo: https://github.com/pycqa/isort
-    rev: 5.12.0  # Possible releases: https://github.com/pycqa/isort/releases
+    rev: 5.13.2  # Possible releases: https://github.com/pycqa/isort/releases
     hooks:
       - id: isort
         always_run: false
@@ -78,13 +78,13 @@ repos:
           - commit
 
   - repo: https://github.com/hadialqattan/pycln
-    rev: v2.2.2 # Possible releases: https://github.com/hadialqattan/pycln/releases
+    rev: v2.4.0 # Possible releases: https://github.com/hadialqattan/pycln/releases
     hooks:
       - id: pycln
         args: [ --config=pyproject.toml ]
 
   - repo: https://github.com/psf/black
-    rev: 23.7.0  # Possible releases: https://github.com/psf/black/releases
+    rev: 24.4.2  # Possible releases: https://github.com/psf/black/releases
     hooks:
       - id: black
         always_run: false
@@ -108,7 +108,7 @@ repos:
           - commit
 
   - repo: https://github.com/pre-commit/mirrors-mypy
-    rev: v1.5.0  # Possible releases: https://github.com/python/mypy/tags
+    rev: v1.10.0  # Possible releases: https://github.com/python/mypy/tags
     hooks:
       - id: mypy
         name: mypy
