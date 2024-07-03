@@ -85,7 +85,7 @@ pytest-cov = "4.0.0"
 pytest-sugar = "0.9.6"
 pytest-random-order = "1.1.0"
 pytest-mock = "3.10.0"
-deker = { version="^1.1.7b", allow-prereleases = true, source = "testpypi"}
+deker = "^1.1.7"
 
 [tool.poetry.group.docs.dependencies]
 docutils = "0.17"
