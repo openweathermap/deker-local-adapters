@@ -7,7 +7,7 @@ requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
-version = "1.1.1"  # a placeholder for poetry CI dynamic versionning plugin
+version = "1.1.2"  # a placeholder for poetry CI dynamic versionning plugin
 name = "deker_local_adapters"
 packages = [{ include = "deker_local_adapters" }]
 description = "Plugin with local adapters for deker"
@@ -85,7 +85,7 @@ pytest-cov = "4.0.0"
 pytest-sugar = "0.9.6"
 pytest-random-order = "1.1.0"
 pytest-mock = "3.10.0"
-deker = "^1.1.6"
+deker = { version="^1.1.7b", allow-prereleases = true, source = "testpypi"}
 
 [tool.poetry.group.docs.dependencies]
 docutils = "0.17"
