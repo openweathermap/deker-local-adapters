@@ -52,21 +52,26 @@ class LocalAdapterMixin(object):
     logger: Logger
     executor: ThreadPoolExecutor
 
-    def _delete(self, file: Path) -> None:
+    def _delete(self, symlink: Path) -> None:
         """Delete symlink and realpath files from disk.
 
-        :param file: path to the file
+        :param symlink: path to the symlink file
         """
         try:
-            if file.exists():
-                os.remove(file)
-            if file.parent.exists():
-                for folder in file.parents:
-                    subs = os.listdir(folder)
-                    if subs or any(str(folder).endswith(directory) for directory in self.dirs):
-                        break
-                    if folder.exists():
-                        os.rmdir(folder)
+            data = symlink.readlink()
+            if data.exists():
+                os.remove(data)
+
+            symlink.unlink(missing_ok=True)
+
+            for file in (data, symlink):
+                if file.parent.exists():
+                    for folder in file.parents:
+                        subs = os.listdir(folder)
+                        if subs or any(str(folder).endswith(directory) for directory in self.dirs):
+                            break
+                        if folder.exists():
+                            os.rmdir(folder)
         except FileNotFoundError:
             pass
 
@@ -79,9 +84,7 @@ class LocalAdapterMixin(object):
         try:
             paths = get_paths(array, self.collection_path)
             filename = array.id + self.file_ext
-            files = (paths.symlink / filename, paths.main / filename)
-            for file in files:
-                self._delete(file)
+            self._delete(paths.symlink / filename)
 
         except Exception as e:
             self.logger.exception(e)
