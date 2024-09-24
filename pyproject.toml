@@ -7,7 +7,7 @@ requires = ["poetry-core>=1.0.0"]
 build-backend = "poetry.core.masonry.api"
 
 [tool.poetry]
-version = "1.1.2"  # a placeholder for poetry CI dynamic versionning plugin
+version = "0.0.0"  # a placeholder for poetry CI dynamic versionning plugin
 name = "deker_local_adapters"
 packages = [{ include = "deker_local_adapters" }]
 description = "Plugin with local adapters for deker"

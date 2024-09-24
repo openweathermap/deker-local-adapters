@@ -50,7 +50,8 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
     file_ext: str = ".hdf5"
     storage_options = HDF5Options
 
-    def create(self, path: Path, array_shape: Tuple[int, ...], metadata: Union[str, bytes, dict]) -> None:
+    @classmethod
+    def create(cls, path: Path, array_shape: Tuple[int, ...], metadata: Union[str, bytes, dict]) -> None:
         """Create new hdf5 file with metadata.
 
         :param path: path to hdf5 file
@@ -58,9 +59,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         :param metadata: array metadata
         """
         try:
-            self.logger.debug(f"trying to create {path}")
+            # cls.logger.debug(f"trying to create {path}")
             with h5py.File(path, "w", locking=False) as f:
-                self.logger.debug(f"{path} opened in 'w'-mode")
+                # cls.logger.debug(f"{path} opened in 'w'-mode")
                 if not isinstance(metadata, (str, bytes)):
                     value = json.dumps(metadata, default=str)
                 else:
@@ -79,13 +80,14 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 )
                 empty_cells.flush()
                 f.flush()
-            self.logger.debug(f"{path} created and closed")
+            # cls.logger.debug(f"{path} created and closed")
         except Exception as e:
-            self.logger.exception(e)
+            # cls.logger.exception(e)
             raise e
 
+    @classmethod
     def read_data(
-        self,
+        cls,
         path: Path,
         array_shape: Tuple[int, ...],
         bounds: Slice,
@@ -100,37 +102,39 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         :param fill_value: Value to fill empty array
         :param dtype: array dtype
         """
-        self.logger.debug(f"trying to read data from {path}")
+        # cls.logger.debug(f"trying to read data from {path}")
         with h5py.File(path, mode="r", locking=False) as f:
-            self.logger.debug(f"{path} opened in 'r'-mode")
-            self.logger.debug(f"trying to read data from {path}")
+            # cls.logger.debug(f"{path} opened in 'r'-mode")
+            # cls.logger.debug(f"trying to read data from {path}")
             ds = f.get("data")
             if not ds:
                 ds = np.zeros(shape=array_shape, dtype=dtype)
                 ds[:] = fill_value
             data = ds[bounds]
-        self.logger.debug(f"{path} data read OK and closed")
+        # cls.logger.debug(f"{path} data read OK and closed")
         return data
 
-    def read_meta(self, path: Path) -> ArrayMeta:
+    @classmethod
+    def read_meta(cls, path: Path) -> ArrayMeta:
         """Read array metadata from hdf5 file.
 
         :param path: path to hdf5 file
         """
-        self.logger.debug(f"trying to read meta from {path}")
+        # cls.logger.debug(f"trying to read meta from {path}")
         with h5py.File(path, mode="r", locking=False) as f:
-            self.logger.debug(f"{path} opened in 'r'-mode")
+            # cls.logger.debug(f"{path} opened in 'r'-mode")
             ds: Dataset = f.get("meta")
             if not ds:
                 raise DekerArrayError("No metadata in the array. Try to delete and recreate the array.")
             data = ds[()]
         decoded = data.decode("utf-8")
         meta = json.loads(decoded)
-        self.logger.debug(f"{path} meta read OK and closed")
+        # cls.logger.debug(f"{path} meta read OK and closed")
         return meta
 
+    @classmethod
     def update_data(
-        self,
+        cls,
         path: Path,
         bounds: Slice,
         data: ndarray,
@@ -150,9 +154,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         :param collection_options: chunking and compression options
         """
         try:
-            self.logger.debug(f"trying to update data in {path}")
+            # cls.logger.debug(f"trying to update data in {path}")
             with h5py.File(path, mode="r+", locking=False) as f:
-                self.logger.debug(f"{path} opened in 'r+'-mode")
+                # cls.logger.debug(f"{path} opened in 'r+'-mode")
                 empty_cells_ds: Dataset = f["empty_cells"]
                 total_cells = calculate_total_cells_in_array(shape)
 
@@ -210,21 +214,22 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 empty_cells_ds[()] = fresh_empty_cells
                 empty_cells_ds.flush()
                 f.flush()
-            self.logger.debug(f"{path} data updated OK and closed")
+            # cls.logger.debug(f"{path} data updated OK and closed")
         except Exception as e:
-            self.logger.exception(e)
+            # cls.logger.exception(e)
             raise e
 
-    def update_meta_custom_attributes(self, path: Path, attributes: dict) -> dict:
+    @classmethod
+    def update_meta_custom_attributes(cls, path: Path, attributes: dict) -> dict:
         """Update metadata in the existing array in hdf5 file.
 
         :param path: path to hdf5 file
         :param attributes: new custom attributes
         """
         try:
-            self.logger.debug(f"trying to update meta in {path}")
+            # cls.logger.debug(f"trying to update meta in {path}")
             with h5py.File(path, "r+", locking=False) as f:
-                self.logger.debug(f"{path} opened in 'r+'-mode")
+                # cls.logger.debug(f"{path} opened in 'r+'-mode")
                 ds = f.get("meta")
                 if not ds:
                     raise DekerArrayError("No metadata in the array. Try to delete and recreate the array.")
@@ -242,13 +247,14 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 )
                 ds.flush()
                 f.flush()
-            self.logger.debug(f"{path} meta updated OK and closed")
+            # cls.logger.debug(f"{path} meta updated OK and closed")
             return attributes
         except Exception as e:
-            self.logger.exception(e)
+            # cls.logger.exception(e)
             raise e
 
-    def clear_data(self, path: Path, array_shape: Tuple[int, ...], bounds: Slice, fill_value: Numeric) -> None:
+    @classmethod
+    def clear_data(cls, path: Path, array_shape: Tuple[int, ...], bounds: Slice, fill_value: Numeric) -> None:
         """Clear array data in hdf5 file.
 
         :param path: path to hdf5 file
@@ -257,9 +263,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         :param fill_value: array fill_value
         """
         try:
-            self.logger.debug(f"trying to clear data in {path}")
+            # cls.logger.debug(f"trying to clear data in {path}")
             with h5py.File(path, "r+", locking=False) as f:
-                self.logger.debug(f"{path} opened in 'r+'-mode")
+                # cls.logger.debug(f"{path} opened in 'r+'-mode")
                 if ds := f.get("data"):
                     subset_shape = create_shape_from_slice(array_shape, bounds)
 
@@ -279,7 +285,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
 
                     empty_cells_ds.flush()
                     f.flush()
-            self.logger.debug(f"{path} data cleared OK and closed")
+            # cls.logger.debug(f"{path} data cleared OK and closed")
         except Exception as e:
-            self.logger.exception(e)
+            # cls.logger.exception(e)
             raise e
