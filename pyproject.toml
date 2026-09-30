@@ -56,7 +56,7 @@ priority = "supplemental"
 
 [tool.poetry.dependencies]
 python = "^3.11"
-numpy = "^1.18"
+numpy = ">=1.26,<3"
 h5py = "^3.8.0"
 hdf5plugin = "^4.0.1"
 deker-tools = "^1.0.0"
