@@ -183,17 +183,18 @@ class LocalAdapterMixin(object):
         )
 
         try:
-            for file in os.scandir(
+            with os.scandir(
                 symlinks_path,
-            ):  # type: ignore
-                if file.is_file():
-                    array_name = file.name
-                    path = Path(symlinks_path) / array_name
-                    self.logger.debug(f"filtered {path}")  # type: ignore[attr-defined]
-                    return self._init_array(path, collection, array_adapter, varray_adapter)
-                # If symlink is broken
-                elif file.is_symlink() and not file.is_file():
-                    raise DekerBrokenSymlinkError(f"Seems like {file} is a broken symlink.")
+            ) as entries:  # type: ignore
+                for file in entries:
+                    if file.is_file():
+                        array_name = file.name
+                        path = Path(symlinks_path) / array_name
+                        self.logger.debug(f"filtered {path}")  # type: ignore[attr-defined]
+                        return self._init_array(path, collection, array_adapter, varray_adapter)
+                    # If symlink is broken
+                    elif file.is_symlink() and not file.is_file():
+                        raise DekerBrokenSymlinkError(f"Seems like {file} is a broken symlink.")
         except FileNotFoundError:
             self.logger.debug("nothing was filtered")  # type: ignore[attr-defined]
 
