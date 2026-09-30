@@ -29,9 +29,10 @@ classifiers = [
     "Operating System :: MacOS :: MacOS X",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.9",
-    "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
 ]
 
 [tool.poetry-dynamic-versioning]
@@ -54,7 +55,7 @@ priority = "supplemental"
                                 ####################
 
 [tool.poetry.dependencies]
-python = "^3.9"
+python = "^3.11"
 numpy = "^1.18"
 h5py = "^3.8.0"
 hdf5plugin = "^4.0.1"
