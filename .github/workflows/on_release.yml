@@ -6,9 +6,17 @@ on:
       - 'v[1-9]+.[0-9]+.[0-9]+'
 
 jobs:
+  tox_tests:
+    uses: openweathermap/deker-actions/.github/workflows/tox.yml@feature/python-versions-input
+    with:
+      package-name: ${{ vars.PACKAGE_NAME }}
+      min-coverage: 92
+      python-versions: '["3.10", "3.11", "3.12", "3.13", "3.14"]'
+
   build_sdist:
+    needs: tox_tests
     name: Build source distribution
-    uses: openweathermap/deker-actions/.github/workflows/build.yml@master
+    uses: openweathermap/deker-actions/.github/workflows/build.yml@feature/python-versions-input
 
   upload_pypi:
     name: Publish source distribution

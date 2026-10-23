@@ -7,7 +7,8 @@ on:
 
 jobs:
   tox:
-    uses: openweathermap/deker-actions/.github/workflows/tox.yml@master
+    uses: openweathermap/deker-actions/.github/workflows/tox.yml@feature/python-versions-input
     with:
       package-name: ${{ vars.PACKAGE_NAME }}
       min-coverage: 92
+      python-versions: '["3.10", "3.11", "3.12", "3.13", "3.14"]'

@@ -223,7 +223,7 @@ class HDF5Options(BaseCollectionOptions):
                         chunks = None  # type: ignore[assignment]
                     coll_params.update({"chunks": chunks})
         if compression:
-            coll_params.update({"compression_opts": HDF5CompressionOpts(**compression)})  # type: ignore[dict-item]
+            coll_params.update({"compression_opts": HDF5CompressionOpts(**compression)})  # type: ignore[arg-type]
 
         return coll_params
 

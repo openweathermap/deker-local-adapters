@@ -29,7 +29,6 @@ from deker.locks import CollectionLock
 from deker.tools import check_memory
 from deker.tools.decorators import check_ctx_state
 
-
 if TYPE_CHECKING:
     from deker.collection import Collection
 
