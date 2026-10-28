@@ -11,7 +11,7 @@ import sys
 
 
 project = "Deker local adapters"
-copyright = "2023, OpenWeather"
+copyright = "2023-2026, OpenWeather"
 author = "OpenWeather"
 
 # Add support for auto-doc

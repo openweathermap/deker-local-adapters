@@ -36,7 +36,6 @@ from numpy import ndarray
 
 from deker_local_adapters.storage_adapters.hdf5.hdf5_options import HDF5Options
 
-
 os.environ["HDF5_PLUGIN_PATH"] = hdf5plugin.PLUGIN_PATH
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
