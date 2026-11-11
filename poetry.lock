@@ -995,22 +995,17 @@ reference = "testpypi"
 
 [[package]]
 name = "deker-tools"
-version = "1.2.0b1"
+version = "1.2.0"
 description = "Shared functions library for Deker components"
 optional = false
-python-versions = ">=3.10,<4.0"
+python-versions = "<4.0,>=3.10"
 groups = ["main"]
 files = [
-    {file = "deker_tools-1.2.0b1.tar.gz", hash = "sha256:01fe05faf8475438a190133fd79adac2e9950887b2e76687830de7fb4c254431"},
+    {file = "deker_tools-1.2.0.tar.gz", hash = "sha256:b8527ffdac2670cb51d2add439233c1f127b78256a6e7895612509f92c5c84c4"},
 ]
 
 [package.dependencies]
 numpy = ">=1.26,<3"
-
-[package.source]
-type = "legacy"
-url = "https://test.pypi.org/simple"
-reference = "testpypi"
 
 [[package]]
 name = "dict2css"
@@ -3965,4 +3960,4 @@ test = ["pytest", "ruff"]
 [metadata]
 lock-version = "2.1"
 python-versions = "^3.10"
-content-hash = "d282f52ae93962e080035c58acb2f5c080d50fc46a73ca88ca9d74afe8573aa3"
+content-hash = "ac66d250b89a56381c756cf6034a4229dffee72a6b070055cd07d9c2249d2fe6"

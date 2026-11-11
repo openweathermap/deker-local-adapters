@@ -60,7 +60,7 @@ python = "^3.10"
 numpy = ">=1.26,<3"
 h5py = ">=3.11,<4"
 hdf5plugin = ">=4.0.1,<8"
-deker-tools = ">=1.2.0b1,<2"
+deker-tools = "^1.2.0"
 
 
 [tool.poetry.group.dev.dependencies]
