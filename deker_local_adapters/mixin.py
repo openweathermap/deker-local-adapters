@@ -30,7 +30,6 @@ from deker_tools.path import is_empty
 
 from deker_local_adapters.errors import DekerBrokenSymlinkError
 
-
 if TYPE_CHECKING:
     from deker.ABC import BaseArraysSchema
     from deker.ABC.base_adapters import BaseArrayAdapter, BaseVArrayAdapter

@@ -18,13 +18,13 @@ NumericDtypes = [
     numpy.float16,
     numpy.float64,
     numpy.float128,
-    numpy.longfloat,
+    numpy.longdouble,
     numpy.double,
     numpy.longdouble,
     numpy.complex64,
     numpy.complex128,
     numpy.complex256,
-    numpy.longcomplex,
+    numpy.clongdouble,
     numpy.longlong,
 ]
 
