@@ -34,7 +34,6 @@ from numpy import ndarray
 
 from deker_local_adapters.mixin import LocalAdapterMixin
 
-
 if TYPE_CHECKING:
     from concurrent.futures import ThreadPoolExecutor
 
