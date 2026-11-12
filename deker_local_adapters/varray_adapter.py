@@ -18,7 +18,7 @@ import json
 import logging
 import os
 
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -44,7 +44,7 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
         collection_path: Path,
         ctx: "CTX",
         storage_adapter: type["BaseStorageAdapter"],
-        executor: ProcessPoolExecutor,
+        executor: ThreadPoolExecutor,
     ) -> None:
         self.data_dir = ctx.config.varray_data_directory
         self.symlinks_dir = ctx.config.varray_symlinks_directory

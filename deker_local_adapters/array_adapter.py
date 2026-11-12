@@ -36,7 +36,7 @@ from numpy import ndarray
 from deker_local_adapters.mixin import LocalAdapterMixin
 
 if TYPE_CHECKING:
-    from concurrent.futures import ProcessPoolExecutor
+    from concurrent.futures import ThreadPoolExecutor
 
     from deker.ABC import BaseStorageAdapter
     from deker.ABC.base_collection import BaseCollectionOptions
@@ -51,7 +51,7 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
         collection_path: Path,
         ctx: "CTX",
         storage_adapter: type["BaseStorageAdapter"],
-        executor: "ProcessPoolExecutor",
+        executor: "ThreadPoolExecutor",
         collection_options: Optional["BaseCollectionOptions"] = None,
     ) -> None:
         self.collection_options = collection_options

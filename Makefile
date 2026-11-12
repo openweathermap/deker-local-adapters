@@ -40,9 +40,9 @@ test:  ## Run the tests in random order
 	uv run pytest --random-order
 
 coverage:  ## Run the tests with coverage and enforce the threshold from pyproject.toml
-	uv run pytest --cov=. tests/ --cov-report=term-missing --cov-report=term-missing --cov-report html
+	uv run pytest --cov=. tests/ --cov-report=term-missing --cov-report html
 
-ci: check test coverage  ## Run every check and the tests sequentially, as CI does
+ci: format check test coverage  ## Run every check and the tests sequentially, as CI does
 
 pre-commit:  ## Run all pre-commit hooks on all files
 	uv run pre-commit run --all-files

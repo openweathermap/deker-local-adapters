@@ -17,7 +17,7 @@
 import os
 
 from collections.abc import Generator
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from logging import Logger
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -50,7 +50,7 @@ class LocalAdapterMixin:
     collection_path: Path
     dirs: tuple
     logger: Logger
-    executor: ProcessPoolExecutor
+    executor: ThreadPoolExecutor
 
     def _delete(self, symlink: Path) -> None:
         """Delete symlink and realpath files from disk.

@@ -2,7 +2,7 @@ import logging
 import platform
 import shutil
 
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ThreadPoolExecutor
 from multiprocessing import cpu_count
 from pathlib import Path
 from random import choices
@@ -39,9 +39,9 @@ def workers() -> int:
 
 
 @pytest.fixture()
-def executor(workers: int) -> ProcessPoolExecutor:
+def executor(workers: int) -> ThreadPoolExecutor:
     """Creates thread executor."""
-    return ProcessPoolExecutor(workers)
+    return ThreadPoolExecutor(workers)
 
 
 @pytest.fixture()
@@ -91,7 +91,7 @@ def uri(root_path) -> Uri:
 @pytest.fixture()
 def ctx(uri: Uri, config, storage_adapter, workers) -> CTX:
     """Creates Client context."""
-    return CTX(uri, config, storage_adapter, ProcessPoolExecutor(workers))
+    return CTX(uri, config, storage_adapter, ThreadPoolExecutor(workers))
 
 
 @pytest.fixture()
