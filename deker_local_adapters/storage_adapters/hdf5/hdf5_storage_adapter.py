@@ -16,7 +16,6 @@
 
 import json
 import os
-import sys
 
 from pathlib import Path
 
@@ -61,6 +60,19 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
             return int(np.count_nonzero(np.isnan(array)))
         return int(np.count_nonzero(array == fill_value))
 
+    @staticmethod
+    def _create_meta_dataset(f: h5py.File, meta: str | bytes) -> Dataset:
+        """Store ``meta`` as a scalar fixed-length bytes dataset sized exactly to its UTF-8 payload.
+
+        :param f: open hdf5 file
+        :param meta: JSON metadata
+        :returns: the created ``meta`` dataset
+        """
+        encoded = meta if isinstance(meta, bytes) else meta.encode("utf-8")
+        ds = f.create_dataset("meta", data=encoded, dtype=f"S{len(encoded)}", shape=())
+        ds.flush()
+        return ds
+
     @classmethod
     def _delete_data_if_empty(cls, f: h5py.File, ds: Dataset, fill_value: Numeric, total_cells: int) -> int:
         """Delete the ``data`` dataset if every cell holds the fill_value; return the true number of empty cells.
@@ -93,20 +105,10 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
             with h5py.File(path, "w", locking=False) as f:
                 self.logger.debug(f"{path} opened in 'w'-mode")
                 if not isinstance(metadata, (str, bytes)):
-                    value = json.dumps(metadata, default=str)
-                else:
-                    value = metadata  # type: ignore[assignment]
-                dtype = f"S{sys.getsizeof(value.encode('utf-8'))}"
-                shape = ()
-                meta_ds = f.create_dataset(
-                    "meta",
-                    data=value,
-                    dtype=dtype,
-                    shape=shape,
-                )
-                meta_ds.flush()
+                    metadata = json.dumps(metadata, default=str)
+                self._create_meta_dataset(f, metadata)
                 empty_cells = f.create_dataset(
-                    "empty_cells", data=calculate_total_cells_in_array(array_shape), shape=shape
+                    "empty_cells", data=calculate_total_cells_in_array(array_shape), shape=()
                 )
                 empty_cells.flush()
                 f.flush()
@@ -136,11 +138,14 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         with h5py.File(path, mode="r", locking=False) as f:
             self.logger.debug(f"{path} opened in 'r'-mode")
             self.logger.debug(f"trying to read data from {path}")
-            ds = f.get("data")
-            if not ds:
-                ds = np.zeros(shape=array_shape, dtype=dtype)
-                ds[:] = fill_value
-            data = ds[bounds]
+            ds: Dataset | None = f.get("data")
+            if ds is None:
+                # no data stored yet: nothing to read, only the requested region is allocated
+                data = np.full(create_shape_from_slice(array_shape, bounds), fill_value, dtype=dtype)
+                if data.ndim == 0:
+                    data = data[()]  # an integer index yields a scalar, as it does for a stored dataset
+            else:
+                data = ds[bounds]
         self.logger.debug(f"{path} data read OK and closed")
         return data
 
@@ -202,11 +207,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                         # writing fill values into an array that has no data yet: nothing to store
                         empty_cells = total_cells
                     else:
-                        to_storage: ndarray = ndarray(shape=shape, dtype=dtype)
-                        to_storage.fill(fill_value)
-                        to_storage[bounds] = data
-
-                        ds_kwargs = {"data": to_storage, "dtype": dtype, "shape": shape}
+                        # the dataset is created without data: HDF5 serves unwritten regions from ``fillvalue``,
+                        # so only the written region is materialised and no full-size array is built in memory
+                        ds_kwargs: dict = {"shape": shape, "dtype": dtype, "fillvalue": fill_value}
 
                         if collection_options:
                             compression = collection_options.compression_opts.compression  # type: ignore[union-attr]
@@ -220,6 +223,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                             )
 
                         ds = f.create_dataset("data", **ds_kwargs)
+                        ds[bounds] = data
                         ds.flush()
                 else:
                     ds[bounds] = data
@@ -254,14 +258,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 f.flush()
 
                 meta["custom_attributes"] = attributes
-                json_meta = json.dumps(meta, default=str)
-                ds = f.create_dataset(
-                    "meta",
-                    dtype=f"S{sys.getsizeof(json_meta.encode('utf-8'))}",
-                    shape=(),
-                    data=json_meta,
-                )
-                ds.flush()
+                self._create_meta_dataset(f, json.dumps(meta, default=str))
                 f.flush()
             self.logger.debug(f"{path} meta updated OK and closed")
             return attributes
