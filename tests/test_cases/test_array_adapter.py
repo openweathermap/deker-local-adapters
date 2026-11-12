@@ -123,7 +123,7 @@ class TestArrayAdapter:
         file_path = paths.main / filename
         symlink = paths.symlink / filename
 
-        with pytest.raises(raised):  # type: ignore
+        with pytest.raises(raised):
             array_adapter.create(array)
             array[:].update(data)
             assert not file_path.exists()
@@ -222,7 +222,7 @@ class TestArrayAdapter:
         array_adapter.create(array)
         assert os.path.exists(filename)
         result = array_adapter.read_data(array, np.index_exp[:])
-        assert (np.isnan(result)).all()  # type: ignore[arg-type]
+        assert (np.isnan(result)).all()
         assert result.dtype == array.dtype
 
     @pytest.mark.parametrize(
@@ -256,7 +256,7 @@ class TestArrayAdapter:
         assert os.path.exists(filename)
         meta = array.read_meta()
         assert isinstance(meta, dict)
-        assert meta[metakey] == expected  # type: ignore[literal-required]
+        assert meta[metakey] == expected
 
     def test_array_adapter_deletes_array(self, root_path, inserted_array: Array, factory):
         """Tests if array adapter deletes array properly.
@@ -355,8 +355,8 @@ class TestArrayAdapter:
         assert array_with_attributes.custom_attributes == new_custom_attributes
         meta = array_with_attributes.read_meta()
         ar = Array._create_from_meta(
-            array_with_attributes._Array__collection,  # type: ignore[attr-defined]
-            meta,  # type: ignore[arg-type]
+            array_with_attributes._Array__collection,
+            meta,
             array_with_attributes._adapter,
         )
         assert ar.custom_attributes == new_custom_attributes
@@ -374,7 +374,7 @@ class TestArrayAdapter:
         coll = client.create_collection("test", schema=schema)
         array = coll.create()
         try:
-            data = np.asarray([np.iinfo(schema.dtype).min] * 2).reshape(2)  # type: ignore[arg-type,type-var]
+            data = np.asarray([np.iinfo(schema.dtype).min] * 2).reshape(2)
             array[:].update(data)
             array[:].clear()
             result = array[:].read()
@@ -392,7 +392,7 @@ class TestArrayAdapter:
 
 
 class TestArrayAdapterEdges:
-    @pytest.fixture()
+    @pytest.fixture
     def varray_tiles_adapter(self, varray_collection: Collection, ctx) -> LocalArrayAdapter:
         """Adapter of the Arrays (tiles) that belong to the VArray collection."""
         from concurrent.futures import ThreadPoolExecutor

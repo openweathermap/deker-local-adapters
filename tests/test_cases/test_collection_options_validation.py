@@ -171,7 +171,7 @@ class TestOptions:
 
     @pytest.mark.xfail(reason="Compression filter is unavailable")
     @pytest.mark.parametrize(
-        ("chunks, compression, level"),
+        ("chunks", "compression", "level"),
         [
             (None, None, None),
             (True, None, None),
@@ -263,8 +263,10 @@ class TestHDF5OptionsRepr:
         assert repr(opts) == "HDF5CompressionOpts(compression=gzip, compression_opts=9)"
         assert str(opts) == repr(opts)
 
-    def test_options_repr_and_default_compression(self):
-        opts = HDF5Options(chunks=True)
+    @pytest.mark.parametrize("kwargs", [{}, {"compression_opts": None}])
+    def test_options_repr_and_default_compression(self, kwargs):
+        opts = HDF5Options(chunks=True, **kwargs)
+        assert opts.compression_opts == HDF5CompressionOpts()
         assert opts.compression_opts == HDF5CompressionOpts(compression=None, compression_opts=None)
         assert repr(opts).startswith("HDF5Options(chunks=True, compression_opts=HDF5CompressionOpts(")
         assert str(opts) == repr(opts)
@@ -297,6 +299,10 @@ class TestHDF5OptionsProcessing:
     def test_lzf_does_not_accept_options(self):
         with pytest.raises(ValueError, match="LZF"):
             HDF5Options._process_options({"compression": {"compression": "lzf", "options": ("1",)}})
+
+    def test_gzip_level_must_be_an_integer(self):
+        with pytest.raises(DekerValidationError, match="gzip"):
+            HDF5Options._process_options({"compression": {"compression": "gzip", "options": ("fast",)}})
 
     @pytest.mark.parametrize(
         ("stored", "expected"),

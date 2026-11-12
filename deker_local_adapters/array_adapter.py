@@ -142,7 +142,7 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
 
     @check_ctx_state
     @WriteArrayLock()
-    def update(self, array: Array, bounds: Slice, data: Any) -> None:  # type: ignore
+    def update(self, array: Array, bounds: Slice, data: Any) -> None:
         """Update data in the existing array.
 
         :param array: Array instance
@@ -153,7 +153,7 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
 
         if data is None:
             raise ValueError("Updating data shall not be None")
-        data = self._process_data(array.dtype, array.shape, data, bounds)  # type: ignore
+        data = self._process_data(array.dtype, array.shape, data, bounds)
         self.storage_adapter.update_data(
             filename,
             bounds,

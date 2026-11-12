@@ -17,7 +17,7 @@ from deker_local_adapters import AdaptersFactory, LocalCollectionAdapter
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 
-@pytest.mark.asyncio()
+@pytest.mark.asyncio
 class TestCollectionAdapter:
     """Class for testing local collection adapter."""
 
@@ -217,7 +217,7 @@ class TestCollectionAdapter:
 
         names = {random_string() for _ in range(10)}
         collections = [client.create_collection(name, array_schema) for name in names]
-        adapter: LocalCollectionAdapter = collections[0]._Collection__adapter  # type: ignore[attr-defined]
+        adapter: LocalCollectionAdapter = collections[0]._Collection__adapter
         coll_names = {coll["name"] for coll in adapter}
         assert names.issubset(coll_names)
         assert names - coll_names == set()

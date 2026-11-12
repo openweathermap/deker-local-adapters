@@ -16,7 +16,7 @@
 
 import os
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from concurrent.futures import ThreadPoolExecutor
 from logging import Logger
 from pathlib import Path
@@ -51,6 +51,7 @@ class LocalAdapterMixin:
     dirs: tuple
     logger: Logger
     executor: ThreadPoolExecutor
+    read_meta: Callable[[Path], ArrayMeta]  # provided by the adapter
 
     def _delete(self, symlink: Path) -> None:
         """Delete symlink and realpath files from disk.
@@ -156,7 +157,7 @@ class LocalAdapterMixin:
         :param varray_adapter: VArrays' adapter
         :returns: Array or VArray built from the meta
         """
-        meta = self.read_meta(path)  # type: ignore[attr-defined]
+        meta = self.read_meta(path)
 
         if varray_adapter:
             array = VArray._create_from_meta(collection, meta, array_adapter, varray_adapter)
@@ -182,7 +183,7 @@ class LocalAdapterMixin:
         :returns: matching Array or VArray, or ``None`` if nothing was found
         """
         symlinks_path = get_symlink_path(
-            path_to_symlink_dir=collection.path / self.symlinks_dir,  # type: ignore[operator]
+            path_to_symlink_dir=collection.path / self.symlinks_dir,
             primary_attributes_schema=schema.primary_attributes,
             primary_attributes=primary_attributes,
         )
@@ -190,17 +191,17 @@ class LocalAdapterMixin:
         try:
             for file in os.scandir(
                 symlinks_path,
-            ):  # type: ignore
+            ):
                 if file.is_file():
                     array_name = file.name
                     path = Path(symlinks_path) / array_name
-                    self.logger.debug(f"filtered {path}")  # type: ignore[attr-defined]
+                    self.logger.debug(f"filtered {path}")
                     return self._init_array(path, collection, array_adapter, varray_adapter)
                 # If symlink is broken
                 elif file.is_symlink() and not file.is_file():
                     raise DekerBrokenSymlinkError(f"Seems like {file} is a broken symlink.")
         except FileNotFoundError:
-            self.logger.debug("nothing was filtered")  # type: ignore[attr-defined]
+            self.logger.debug("nothing was filtered")
 
     def get_by_id(
         self,
@@ -219,11 +220,11 @@ class LocalAdapterMixin:
         """
         filename = id_ + self.file_ext
 
-        data_path = collection.path / self.data_dir  # type: ignore[operator]
+        data_path = collection.path / self.data_dir
         path = get_main_path(id_, data_path)
         file = path / filename
         if file.exists():
-            self.logger.debug(f"filtered {file}")  # type: ignore[attr-defined]
+            self.logger.debug(f"filtered {file}")
             return self._init_array(file, collection, array_adapter, varray_adapter)
 
     def __iter__(self) -> Generator[ArrayMeta, None, None]:
@@ -234,5 +235,5 @@ class LocalAdapterMixin:
                 if not file.endswith(self.file_ext):
                     continue
                 path = Path(os.path.join(root, file))
-                meta = self.read_meta(path)  # type: ignore[attr-defined]
+                meta = self.read_meta(path)
                 yield meta

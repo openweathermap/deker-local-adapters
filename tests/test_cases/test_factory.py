@@ -2,8 +2,7 @@ import pytest
 
 from deker_local_adapters import LocalArrayAdapter, LocalCollectionAdapter, LocalVArrayAdapter
 from deker_local_adapters.errors import DekerStorageError
-from deker_local_adapters.factory import storage_adapter_factory
-from deker_local_adapters.factory import AdaptersFactory
+from deker_local_adapters.factory import AdaptersFactory, storage_adapter_factory
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 

@@ -1,10 +1,8 @@
 import random
 
 from string import ascii_letters, digits, punctuation
-from typing import Union
 
 import numpy
-
 
 INTEG = random.randint(1, 25)
 NumericDtypes = [

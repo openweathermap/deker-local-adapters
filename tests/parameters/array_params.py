@@ -1,5 +1,4 @@
 from datetime import datetime
-from typing import List
 
 
 def attributes_validation_params() -> list[dict]:

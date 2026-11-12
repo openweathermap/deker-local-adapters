@@ -2,7 +2,7 @@ import random
 
 from datetime import datetime, timedelta
 from types import NoneType
-from typing import Any, List, Tuple, Type, Union
+from typing import Any
 from zoneinfo import ZoneInfo
 
 from deker.ABC.base_schemas import BaseDimensionSchema
@@ -206,7 +206,7 @@ class TimedSchemaParams:
         def _get_dims_dtype(cls) -> tuple:
             dims, dtype = super()._get_dims_dtype()
             time = TimeDimensionSchema(**time_dimension_schema_datetime_random_params())
-            dims.insert(random.randint(0, len(dims)), time)  # type: ignore
+            dims.insert(random.randint(0, len(dims)), time)
             return dims, dtype
 
         @classmethod
@@ -284,27 +284,27 @@ class TimedArraySchemaParams:
         @classmethod
         def primary_attributes(cls) -> ArraySchema:
             dimensions, dtype, attributes = TimedSchemaParams.OK.primary_attributes()
-            return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attributes)  # type: ignore[arg-type]
+            return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attributes)
 
         @classmethod
         def custom_attributes(cls) -> ArraySchema:
             dimensions, dtype, attributes = TimedSchemaParams.OK.custom_attributes()
-            return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attributes)  # type: ignore[arg-type]
+            return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attributes)
 
         @classmethod
         def all_attrs(cls) -> ArraySchema:
             dimensions, dtype, attributes = TimedSchemaParams.OK.all_attrs()
-            return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attributes)  # type: ignore[arg-type]
+            return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attributes)
 
         @classmethod
         def vgrid_primary_attributes(cls) -> ArraySchema:
             dimensions, dtype, attributes = TimedSchemaParams.OK.vgrid_primary_attributes()
-            return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attributes)  # type: ignore[arg-type]
+            return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attributes)
 
         @classmethod
         def vgrid_all_attrs(cls) -> ArraySchema:
             dimensions, dtype, attributes = TimedSchemaParams.OK.vgrid_all_attrs()
-            return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attributes)  # type: ignore[arg-type]
+            return ArraySchema(dimensions=dimensions, dtype=dtype, attributes=attributes)
 
 
 class TimedVArraySchemaParams:
@@ -325,7 +325,7 @@ class TimedVArraySchemaParams:
                 dimensions=dimensions,
                 dtype=dtype,
                 attributes=attributes,
-                vgrid=vgrd,  # type: ignore[arg-type]
+                vgrid=vgrd,
             )
 
         @classmethod
@@ -336,7 +336,7 @@ class TimedVArraySchemaParams:
                 dimensions=dimensions,
                 dtype=dtype,
                 attributes=attributes,
-                vgrid=vgrd,  # type: ignore[arg-type]
+                vgrid=vgrd,
             )
 
         @classmethod
@@ -347,7 +347,7 @@ class TimedVArraySchemaParams:
                 dimensions=dimensions,
                 dtype=dtype,
                 attributes=attributes,
-                vgrid=vgrd,  # type: ignore[arg-type]
+                vgrid=vgrd,
             )
 
         @classmethod
@@ -358,7 +358,7 @@ class TimedVArraySchemaParams:
                 dimensions=dimensions,
                 dtype=dtype,
                 attributes=attributes,
-                vgrid=vgrd,  # type: ignore[arg-type]
+                vgrid=vgrd,
             )
 
         @classmethod
@@ -369,7 +369,7 @@ class TimedVArraySchemaParams:
                 dimensions=dimensions,
                 dtype=dtype,
                 attributes=attributes,
-                vgrid=vgrd,  # type: ignore[arg-type]
+                vgrid=vgrd,
             )
 
         @classmethod
@@ -382,7 +382,7 @@ class TimedVArraySchemaParams:
         ):
             dims, dtype = ArraySchemaParamsNoTime._get_dims_dtype()
             time_dimension = TimeDimensionSchema(name="dt", size=3, start_value=start_value, step=timedelta(days=10))
-            dims.append(time_dimension)  # type: ignore[arg-type]
+            dims.append(time_dimension)
             attrs = []
             if primary is not None:
                 attrs += cls._get_attrs(primary)
@@ -390,10 +390,10 @@ class TimedVArraySchemaParams:
             cls._insert_time_attribute(attrs, dims)
             if create_as_list:
                 return [
-                    VArraySchema(dtype=dtype, dimensions=dims, attributes=attrs, vgrid=grid)  # type: ignore[arg-type]
-                    for grid in get_vgrids(dims)  # type: ignore[arg-type]
+                    VArraySchema(dtype=dtype, dimensions=dims, attributes=attrs, vgrid=grid)
+                    for grid in get_vgrids(dims)
                 ]
-            return VArraySchema(dtype=dtype, dimensions=dims, attributes=attrs, vgrid=vgrd)  # type: ignore[arg-type]
+            return VArraySchema(dtype=dtype, dimensions=dims, attributes=attrs, vgrid=vgrd)
 
         @classmethod
         def start_value_string_no_extra_attrs(cls, create_as_list: bool = False) -> VArraySchema:
@@ -405,7 +405,7 @@ class TimedVArraySchemaParams:
             return cls.__make_schema_with_attributes(
                 start_value="$dt",
                 primary=None,
-                create_as_list=create_as_list,  # type: ignore[arg-type]
+                create_as_list=create_as_list,
             )
 
         @classmethod
@@ -430,7 +430,7 @@ class TimedVArraySchemaParams:
         def start_value_datetime_no_extra_attrs(cls, create_as_list: bool = False) -> VArraySchema:
             return cls.__make_schema_with_attributes(
                 start_value=datetime.now(ZoneInfo("UTC")),
-                primary=None,  # type: ignore[arg-type]
+                primary=None,
                 create_as_list=create_as_list,
             )
 
@@ -481,8 +481,6 @@ class TypedSchemaParams:
             if exception_types and type(item) in exception_types:
                 continue
             result.append({**base_dict.copy(), key: item})
-            if key == "scale":
-                a = 1
         return result
 
 

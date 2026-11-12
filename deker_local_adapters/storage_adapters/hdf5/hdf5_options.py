@@ -14,7 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 
 from deker.ABC.base_collection import BaseCollectionOptions
 from deker.errors import DekerValidationError
@@ -41,11 +41,11 @@ class HDF5CompressionOpts(Serializer):
     Read correspondent filter documentation for more information.
     """
 
-    compression: str | int | None
-    compression_opts: list | tuple | int | None
+    compression: str | int | None = None
+    compression_opts: list | tuple | int | None = None
 
     def __post_init__(self) -> None:
-        """Convert compression options to tuple."""
+        """Validate the compression filter."""
         if self.compression is not None:
             if not isinstance(self.compression, (str, int)) or isinstance(self.compression, bool):
                 raise DekerValidationError(
@@ -125,7 +125,7 @@ class HDF5Options(BaseCollectionOptions):
     """
 
     chunks: bool | tuple[int, ...] | list[int] | None = None
-    compression_opts: HDF5CompressionOpts | None = None
+    compression_opts: HDF5CompressionOpts = field(default_factory=HDF5CompressionOpts)
 
     def __post_init__(self) -> None:
         """Validate collection options."""
@@ -152,13 +152,25 @@ class HDF5Options(BaseCollectionOptions):
                     )
 
         if self.compression_opts is None:
-            self.compression_opts = HDF5CompressionOpts(compression=None, compression_opts=None)
-        else:
-            if not isinstance(self.compression_opts, HDF5CompressionOpts):
-                raise DekerValidationError(
-                    f"HDF5Options compression_opts invalid type: {type(self.compression_opts)}; "
-                    f"`HDF5CompressionOpts` expected"
-                )
+            # ``None`` is still accepted for backward compatibility and means "no compression"
+            self.compression_opts = HDF5CompressionOpts()
+        elif not isinstance(self.compression_opts, HDF5CompressionOpts):
+            raise DekerValidationError(
+                f"HDF5Options compression_opts invalid type: {type(self.compression_opts)}; "
+                f"`HDF5CompressionOpts` expected"
+            )
+
+    @staticmethod
+    def _gzip_level(level: int | str) -> int:
+        """Validate a gzip compression level read from the stored options.
+
+        :param level: the first compression option
+        :returns: the level as an integer
+        :raises DekerValidationError: if the level is not an integer
+        """
+        if isinstance(level, bool) or not isinstance(level, int):
+            raise DekerValidationError(f"Invalid gzip compression level: {level!r}; integer expected")
+        return level
 
     @classmethod
     def _process_options(cls, storage_options: dict | None) -> dict:  # noqa: C901
@@ -167,47 +179,39 @@ class HDF5Options(BaseCollectionOptions):
         :param storage_options: HDF5 compression options and/or chunks.
         :returns: validated options ready for HDF5Options
         """
-        coll_params = {}
-        compression = {}
+        coll_params: dict = {}
         if storage_options:
             for option in storage_options:
                 dic = {option: storage_options[option]}
                 if option == "compression":
-                    if compression_type := dic[option].get("compression"):
-                        if dic[option].get("options"):
-                            compression_options = []
-                            for opt in dic[option]["options"]:
-                                try:
-                                    compression_option = int(opt)
-                                except ValueError:
-                                    compression_option = opt
-                                compression_options.append(compression_option)
-                        else:
-                            compression_options = None
+                    compression_type: str | int | None = dic[option].get("compression")
+                    compression_options: list | tuple | int | None = None
+                    if compression_type:
+                        parsed_options: list[int | str] = []
+                        for opt in dic[option].get("options") or ():
+                            try:
+                                parsed_options.append(int(opt))
+                            except ValueError:
+                                parsed_options.append(opt)
+                        compression_options = parsed_options or None
 
                         if compression_type == HDF5BuiltinCompressionStringOptions.none.value:
                             compression_type = None
                             compression_options = None
                         elif compression_type == HDF5BuiltinCompressionStringOptions.gzip.value:
-                            if compression_options:
-                                compression_options = compression_options[0]  # type: ignore[assignment]
+                            if parsed_options:
+                                compression_options = cls._gzip_level(parsed_options[0])
                         elif compression_type == HDF5BuiltinCompressionStringOptions.szip.value:
-                            if compression_options:
-                                compression_options = tuple(compression_options)  # type: ignore[assignment]
+                            if parsed_options:
+                                compression_options = tuple(parsed_options)
                         elif compression_type == HDF5BuiltinCompressionStringOptions.lzf.value:
-                            if compression_options:
+                            if parsed_options:
                                 raise ValueError("LZF filter does not accept any options")
                         else:
                             compression_type = int(compression_type)
 
-                    else:
-                        compression_options = None
-
-                    compression.update(
-                        {
-                            "compression": compression_type,
-                            "compression_opts": compression_options,
-                        }
+                    coll_params["compression_opts"] = HDF5CompressionOpts(
+                        compression=compression_type, compression_opts=compression_options
                     )
                 else:
                     if not dic.get("chunks"):
@@ -218,22 +222,20 @@ class HDF5Options(BaseCollectionOptions):
                     if chunks == HDF5ChunksOptions.manual.value:
                         chunks = dic["chunks"]["size"]
                     elif chunks == HDF5ChunksOptions.true.value:
-                        chunks = True  # type: ignore[assignment]
+                        chunks = True
                     else:
-                        chunks = None  # type: ignore[assignment]
+                        chunks = None
                     coll_params.update({"chunks": chunks})
-        if compression:
-            coll_params.update({"compression_opts": HDF5CompressionOpts(**compression)})  # type: ignore[arg-type]
 
         return coll_params
 
     @property
     def as_dict(self) -> dict:
         """Serialize object as dict."""
-        compression_dict = asdict(self.compression_opts)  # type: ignore[arg-type]
+        compression_dict = asdict(self.compression_opts)
         options: tuple[str | None, ...] | None = None
 
-        if self.compression_opts.compression is None:  # type: ignore[union-attr]
+        if self.compression_opts.compression is None:
             compression_dict["compression"] = "none"
             options = tuple()
         else:
@@ -246,11 +248,11 @@ class HDF5Options(BaseCollectionOptions):
 
         chunks = self.chunks
         if isinstance(self.chunks, (list, tuple)):
-            chunks = {"mode": "manual", "size": self.chunks}  # type: ignore[assignment]
+            chunks = {"mode": "manual", "size": self.chunks}
         elif chunks:
-            chunks = {"mode": "true"}  # type: ignore[assignment]
+            chunks = {"mode": "true"}
         else:
-            chunks = {"mode": "none"}  # type: ignore[assignment]
+            chunks = {"mode": "none"}
         return {
             "chunks": chunks,
             "compression": {"compression": compression_dict["compression"], "options": options},

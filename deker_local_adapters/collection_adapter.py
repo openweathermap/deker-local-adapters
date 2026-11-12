@@ -146,7 +146,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter):
 
     @check_ctx_state
     def __iter__(self) -> Generator[dict, None, None]:
-        for directory in os.scandir(self.collections_resource):  # type: ignore
+        for directory in os.scandir(self.collections_resource):
             if os.path.isdir(directory):
                 meta = self.read(directory.name)
                 yield meta

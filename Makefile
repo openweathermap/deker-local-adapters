@@ -22,7 +22,7 @@ format:  ## Format the code: ssort -> pyupgrade -> ruff (imports, autofixes, for
 	uv run ruff format $(PACKAGE) $(TESTS)
 
 lint:  ## Lint the code and verify the formatting (ruff)
-	uv run ruff check $(PACKAGE)
+	uv run ruff check $(PACKAGE) $(TESTS)
 	uv run ruff format --check $(PACKAGE) $(TESTS)
 
 typecheck:  ## Static type check (mypy)

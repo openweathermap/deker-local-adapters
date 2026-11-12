@@ -1,5 +1,4 @@
 from concurrent.futures import ThreadPoolExecutor
-from typing import Type
 
 import pytest
 
@@ -10,7 +9,7 @@ from deker.ctx import CTX
 from deker_local_adapters import HDF5StorageAdapter, LocalArrayAdapter, LocalCollectionAdapter, LocalVArrayAdapter
 
 
-@pytest.fixture()
+@pytest.fixture
 def collection_adapter(ctx) -> LocalCollectionAdapter:
     """Creates a PathCollection adapter.
 
@@ -20,12 +19,12 @@ def collection_adapter(ctx) -> LocalCollectionAdapter:
     return adapter
 
 
-@pytest.fixture()
+@pytest.fixture
 def storage_adapter() -> type[BaseStorageAdapter]:
     return HDF5StorageAdapter
 
 
-@pytest.fixture()
+@pytest.fixture
 def local_array_adapter(array_collection: Collection, ctx: CTX) -> LocalArrayAdapter:
     """Instance of LocalArrayAdapter.
 
@@ -40,7 +39,7 @@ def local_array_adapter(array_collection: Collection, ctx: CTX) -> LocalArrayAda
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def local_varray_adapter(varray_collection: Collection, ctx: CTX) -> LocalVArrayAdapter:
     return LocalVArrayAdapter(
         collection_path=varray_collection.path,

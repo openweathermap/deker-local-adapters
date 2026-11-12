@@ -165,7 +165,6 @@ exclude = [
     '^tmp/',
     '^examples/'
 ]
-disable_error_code = "misc,no-redef,override,union-attr,index,assignment"
 
 [[tool.mypy.overrides]]
 module = "tests/*"
@@ -181,7 +180,6 @@ disallow_untyped_defs = false
 # I      - isort                (isort + flake8-import-order)
 # N      - pep8-naming
 # PT     - flake8-pytest-style
-exclude = ["tests/*"]
 select = ["E", "W", "F", "C90", "B", "D", "I", "N", "PT"]
 ignore = [
     "B9",  # flake8-bugbear "opinionated" rules: opt-in in flake8, were never enabled
@@ -199,6 +197,19 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "D",      # docstrings are not required in tests
+    "N802",   # test data factories keep their names
+    "N805",
+    "PT008",  # existing test structure stays as written: patch(lambda), raises/warns blocks,
+    "PT011",  # composite assertions, duplicate parametrize cases
+    "PT012",
+    "PT014",
+    "PT017",
+    "PT018",
+    "PT031",
+    "B018",   # a property access that is expected to raise
+]
 "__init__.py" = [
     "D104",
     "F401",

@@ -11,7 +11,7 @@ from deker_local_adapters.errors import DekerBrokenSymlinkError
 from deker_local_adapters.varray_adapter import LocalVArrayAdapter
 
 
-@pytest.mark.parametrize("adapter_", ("local_array_adapter", "local_varray_adapter"))
+@pytest.mark.parametrize("adapter_", ["local_array_adapter", "local_varray_adapter"])
 def test_broken_symlink(adapter_: str, request, local_array_adapter, local_varray_adapter):
     adapter = request.getfixturevalue(adapter_)
     if isinstance(adapter, LocalVArrayAdapter):
@@ -26,7 +26,7 @@ def test_broken_symlink(adapter_: str, request, local_array_adapter, local_varra
         symlink_dir = "array_symlinks"
 
     symlinks_path = get_symlink_path(
-        path_to_symlink_dir=collection.path / symlink_dir,  # type: ignore[operator]
+        path_to_symlink_dir=collection.path / symlink_dir,
         primary_attributes_schema=schema.primary_attributes,
         primary_attributes=array.primary_attributes,
     )
