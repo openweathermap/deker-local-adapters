@@ -18,9 +18,9 @@ import json
 import logging
 import os
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-from typing import Any, Type, Union
+from typing import Any
 
 from deker.ABC import BaseStorageAdapter
 from deker.ABC.base_adapters import BaseVArrayAdapter
@@ -43,8 +43,8 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
         self,
         collection_path: Path,
         ctx: "CTX",
-        storage_adapter: Type["BaseStorageAdapter"],
-        executor: ThreadPoolExecutor,
+        storage_adapter: type["BaseStorageAdapter"],
+        executor: ProcessPoolExecutor,
     ) -> None:
         self.data_dir = ctx.config.varray_data_directory
         self.symlinks_dir = ctx.config.varray_symlinks_directory
@@ -54,7 +54,7 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
         super().__init__(collection_path, ctx, executor, storage_adapter)
 
     @check_ctx_state
-    def read_data(self, array: "VArray", bounds: Slice) -> Union[Numeric, ndarray]:
+    def read_data(self, array: "VArray", bounds: Slice) -> Numeric | ndarray:
         """Not implemented."""
         raise NotImplementedError
 
@@ -87,10 +87,11 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
         os.symlink(main_filename, sym_filename)
 
     @check_ctx_state
-    def read_meta(self, array: Union[VArray, Path]) -> ArrayMeta:
+    def read_meta(self, array: VArray | Path) -> ArrayMeta:
         """Read VArray metadata.
 
         :param array:  VArray instance
+        :returns: VArray metadata
         """
         if isinstance(array, VArray):
             filename = self._get_main_path_to_file(array)
@@ -114,7 +115,7 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
         """
         filename = self._get_main_path_to_file(array)
         try:
-            with open(filename, "r") as f:
+            with open(filename) as f:
                 meta = json.loads(f.read())
             meta["custom_attributes"] = attributes
             json_meta = json.dumps(meta, default=str)

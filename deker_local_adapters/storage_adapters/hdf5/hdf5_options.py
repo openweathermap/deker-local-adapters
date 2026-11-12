@@ -15,7 +15,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from dataclasses import asdict, dataclass
-from typing import List, Optional, Tuple, Union
 
 from deker.ABC.base_collection import BaseCollectionOptions
 from deker.errors import DekerValidationError
@@ -31,19 +30,19 @@ class HDF5CompressionOpts(Serializer):
     :param compression: compression filter name
     :param compression_opts: compression level
 
-                             Depending on compressing filter compression_opts may be None, integer or tuple.
-                             E.g.:
+    Depending on compressing filter compression_opts may be None, integer or tuple.
+    E.g.:
 
-                             - `hdf5plugin.Blosc` object accepts several parameters, including `clevel`,
-                             - `hdf5plugin.Zstd` object accepts an integer in range 1-22,
-                             - `szip` filter accepts a tuple of a string and an integer,
-                             - `hdf5plugin.FciDecomp` or `lzf` filters do not accept any parameters at all.
+    - `hdf5plugin.Blosc` object accepts several parameters, including `clevel`,
+    - `hdf5plugin.Zstd` object accepts an integer in range 1-22,
+    - `szip` filter accepts a tuple of a string and an integer,
+    - `hdf5plugin.FciDecomp` or `lzf` filters do not accept any parameters at all.
 
-                             Read correspondent filter documentation for more information.
+    Read correspondent filter documentation for more information.
     """
 
-    compression: Optional[Union[str, int]]
-    compression_opts: Optional[Union[list, tuple, int]]
+    compression: str | int | None
+    compression_opts: list | tuple | int | None
 
     def __post_init__(self) -> None:
         """Convert compression options to tuple."""
@@ -125,8 +124,8 @@ class HDF5Options(BaseCollectionOptions):
     ref.: https://docs.h5py.org/en/stable/high/dataset.html#filter-pipeline
     """
 
-    chunks: Optional[Union[bool, Tuple[int, ...], List[int]]] = None
-    compression_opts: Optional[HDF5CompressionOpts] = None
+    chunks: bool | tuple[int, ...] | list[int] | None = None
+    compression_opts: HDF5CompressionOpts | None = None
 
     def __post_init__(self) -> None:
         """Validate collection options."""
@@ -162,10 +161,11 @@ class HDF5Options(BaseCollectionOptions):
                 )
 
     @classmethod
-    def _process_options(cls, storage_options: Optional[dict]) -> dict:  # noqa: C901
+    def _process_options(cls, storage_options: dict | None) -> dict:  # noqa: C901
         """Validate and convert options for HDF5.
 
         :param storage_options: HDF5 compression options and/or chunks.
+        :returns: validated options ready for HDF5Options
         """
         coll_params = {}
         compression = {}
@@ -231,7 +231,7 @@ class HDF5Options(BaseCollectionOptions):
     def as_dict(self) -> dict:
         """Serialize object as dict."""
         compression_dict = asdict(self.compression_opts)  # type: ignore[arg-type]
-        options: Optional[Tuple[Optional[str], ...]] = None
+        options: tuple[str | None, ...] | None = None
 
         if self.compression_opts.compression is None:  # type: ignore[union-attr]
             compression_dict["compression"] = "none"

@@ -16,10 +16,11 @@
 
 import os
 
-from concurrent.futures import ThreadPoolExecutor
+from collections.abc import Generator
+from concurrent.futures import ProcessPoolExecutor
 from logging import Logger
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator, Optional, Tuple, Union
+from typing import TYPE_CHECKING
 
 from deker.arrays import Array, VArray
 from deker.errors import DekerArrayError, DekerValidationError
@@ -36,7 +37,7 @@ if TYPE_CHECKING:
     from deker.collection import Collection
 
 
-class LocalAdapterMixin(object):
+class LocalAdapterMixin:
     """Mixin for local adapters.
 
     This particular mixin depends on IArray interface.
@@ -47,9 +48,9 @@ class LocalAdapterMixin(object):
     data_dir: str
     symlinks_dir: str
     collection_path: Path
-    dirs: Tuple
+    dirs: tuple
     logger: Logger
-    executor: ThreadPoolExecutor
+    executor: ProcessPoolExecutor
 
     def _delete(self, symlink: Path) -> None:
         """Delete symlink and realpath files from disk.
@@ -75,7 +76,7 @@ class LocalAdapterMixin(object):
             pass
 
     @check_ctx_state
-    def delete(self, array: Union[Array, VArray]) -> None:
+    def delete(self, array: Array | VArray) -> None:
         """Delete the existing array.
 
         :param array: array instance
@@ -89,27 +90,29 @@ class LocalAdapterMixin(object):
             self.logger.exception(e)
             raise e
 
-    def is_deleted(self, array: Union[Array, VArray]) -> bool:
+    def is_deleted(self, array: Array | VArray) -> bool:
         """Check if the array was deleted.
 
         :param array: Array to check
+        :returns: ``True`` if the array main file does not exist
         """
         path = get_main_path(array.id, self.collection_path / self.data_dir)
         # If it does not exist, then it's not created or deleted
         return not os.path.exists(path)
 
     @check_ctx_state
-    def _get_main_path_to_file(self, array: Union[Array, VArray]) -> Path:
+    def _get_main_path_to_file(self, array: Array | VArray) -> Path:
         paths = get_paths(array, self.collection_path)
         file = array.id + self.file_ext
         return paths.main / file
 
-    def get_filenames_for_create_methods(self, array: Union[Array, VArray]) -> Tuple[Path, Path]:
+    def get_filenames_for_create_methods(self, array: Array | VArray) -> tuple[Path, Path]:
         """Return paths to the main file and symlink.
 
         !!! DO NOT USE THIS METHOD ANYWHERE EXCEPT adapter.create !!!!
 
         :param array: Array or VArray
+        :returns: paths to the main file and to its symlink
         """
         paths = get_paths(array, self.collection_path)
         paths.create()
@@ -143,13 +146,14 @@ class LocalAdapterMixin(object):
         collection: "Collection",
         array_adapter: "BaseArrayAdapter",
         varray_adapter: "BaseVArrayAdapter",
-    ) -> Union[Array, VArray]:
+    ) -> Array | VArray:
         """Read meta and make an array/varray object from it.
 
         :param path: Path to meta
         :param collection: Collection instance
         :param array_adapter: Arrays' adapter
         :param varray_adapter: VArrays' adapter
+        :returns: Array or VArray built from the meta
         """
         meta = self.read_meta(path)  # type: ignore[attr-defined]
 
@@ -166,7 +170,7 @@ class LocalAdapterMixin(object):
         collection: "Collection",
         array_adapter: "BaseArrayAdapter",
         varray_adapter: "BaseVArrayAdapter",
-    ) -> Optional[Union[Array, VArray]]:
+    ) -> Array | VArray | None:
         """Find (V)Array by given primary attributes.
 
         :param primary_attributes: Key attributes
@@ -174,6 +178,7 @@ class LocalAdapterMixin(object):
         :param collection: Collection instance
         :param array_adapter: Arrays' adapter
         :param varray_adapter: VArrays' adapter
+        :returns: matching Array or VArray, or ``None`` if nothing was found
         """
         symlinks_path = get_symlink_path(
             path_to_symlink_dir=collection.path / self.symlinks_dir,  # type: ignore[operator]
@@ -202,13 +207,14 @@ class LocalAdapterMixin(object):
         collection: "Collection",
         array_adapter: "BaseArrayAdapter",
         varray_adapter: "BaseVArrayAdapter",
-    ) -> Optional[Union[Array, VArray]]:
+    ) -> Array | VArray | None:
         """Find (V)Array by id.
 
         :param id_: Array id
         :param collection: Collection
         :param array_adapter: Arrays' adapter
         :param varray_adapter: VArrays' adapter
+        :returns: Array or VArray with the id, or ``None`` if its file does not exist
         """
         filename = id_ + self.file_ext
 

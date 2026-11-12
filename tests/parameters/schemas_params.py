@@ -12,8 +12,8 @@ from deker.types import Numeric, Scale
 from tests.parameters.common import INTEG, NumericDtypes, _random_positive_int, random_step, random_string
 
 
-def get_vgrids(dimensions: List[BaseDimensionSchema]):
-    def make_variations(vgrid, index) -> List[list]:
+def get_vgrids(dimensions: list[BaseDimensionSchema]):
+    def make_variations(vgrid, index) -> list[list]:
         vgrds = []
         d = dimensions[index]
         if len(vgrid) == 1:
@@ -69,13 +69,13 @@ def time_dimension_schema_datetime_random_params() -> dict:
 
 class SchemaParams:
     @classmethod
-    def _get_dims_dtype(cls) -> Tuple[List[DimensionSchema], Type[Numeric]]:
+    def _get_dims_dtype(cls) -> tuple[list[DimensionSchema], type[Numeric]]:
         dims = [DimensionSchema(**dimension_schema_random_params()) for _ in range(_random_positive_int())]
         dtype = random.choice(NumericDtypes)
         return dims, dtype
 
     @classmethod
-    def _get_attrs(cls, primary: bool) -> List[AttributeSchema]:
+    def _get_attrs(cls, primary: bool) -> list[AttributeSchema]:
         attrs = [AttributeSchema(**attributes_schema_params(primary)) for _ in range(random.randint(1, 3))]
         return attrs
 
@@ -210,7 +210,7 @@ class TimedSchemaParams:
             return dims, dtype
 
         @classmethod
-        def _insert_time_attribute(cls, attrs: List[AttributeSchema], dimensions: List[DimensionSchema]) -> None:
+        def _insert_time_attribute(cls, attrs: list[AttributeSchema], dimensions: list[DimensionSchema]) -> None:
             for d in dimensions:
                 if isinstance(d, TimeDimensionSchema):
                     if isinstance(d.start_value, str):
@@ -222,7 +222,7 @@ class TimedSchemaParams:
         @classmethod
         def _with_attributes(
             cls, make_primary: bool
-        ) -> Tuple[List[DimensionSchema], Type[Numeric], List[AttributeSchema]]:
+        ) -> tuple[list[DimensionSchema], type[Numeric], list[AttributeSchema]]:
             dimensions, dtype = cls._get_dims_dtype()
             attrs = cls._get_attrs(make_primary)
             cls._insert_time_attribute(attrs, dimensions)
@@ -231,17 +231,17 @@ class TimedSchemaParams:
         @classmethod
         def primary_attributes(
             cls,
-        ) -> Tuple[List[DimensionSchema], Type[Numeric], List[AttributeSchema]]:
+        ) -> tuple[list[DimensionSchema], type[Numeric], list[AttributeSchema]]:
             return cls._with_attributes(True)
 
         @classmethod
         def custom_attributes(
             cls,
-        ) -> Tuple[List[DimensionSchema], Type[Numeric], List[AttributeSchema]]:
+        ) -> tuple[list[DimensionSchema], type[Numeric], list[AttributeSchema]]:
             return cls._with_attributes(False)
 
         @classmethod
-        def all_attrs(cls) -> Tuple[List[DimensionSchema], Type[Numeric], List[AttributeSchema]]:
+        def all_attrs(cls) -> tuple[list[DimensionSchema], type[Numeric], list[AttributeSchema]]:
             dimensions, dtype = cls._get_dims_dtype()
             attrs = [*cls._get_attrs(True), *cls._get_attrs(False)]
             cls._insert_time_attribute(attrs, dimensions)
@@ -250,7 +250,7 @@ class TimedSchemaParams:
         @classmethod
         def vgrid_primary_attributes(
             cls,
-        ) -> Tuple[List[DimensionSchema], Type[Numeric], List[AttributeSchema]]:
+        ) -> tuple[list[DimensionSchema], type[Numeric], list[AttributeSchema]]:
             dimensions, dtype = cls._get_dims_dtype()
             attrs = [
                 AttributeSchema(dtype=str, name="vid", primary=True),
@@ -263,7 +263,7 @@ class TimedSchemaParams:
         @classmethod
         def vgrid_all_attrs(
             cls,
-        ) -> Tuple[List[DimensionSchema], Type[Numeric], List[AttributeSchema]]:
+        ) -> tuple[list[DimensionSchema], type[Numeric], list[AttributeSchema]]:
             dimensions, dtype = cls._get_dims_dtype()
             attrs = [
                 AttributeSchema(dtype=str, name="vid", primary=True),
@@ -322,7 +322,10 @@ class TimedVArraySchemaParams:
             dimensions, dtype, attributes = TimedSchemaParams.OK.primary_attributes()
             vgrd = vgrid or [1] * len(dimensions)
             return VArraySchema(
-                dimensions=dimensions, dtype=dtype, attributes=attributes, vgrid=vgrd  # type: ignore[arg-type]
+                dimensions=dimensions,
+                dtype=dtype,
+                attributes=attributes,
+                vgrid=vgrd,  # type: ignore[arg-type]
             )
 
         @classmethod
@@ -330,7 +333,10 @@ class TimedVArraySchemaParams:
             dimensions, dtype, attributes = TimedSchemaParams.OK.custom_attributes()
             vgrd = vgrid or [1] * len(dimensions)
             return VArraySchema(
-                dimensions=dimensions, dtype=dtype, attributes=attributes, vgrid=vgrd  # type: ignore[arg-type]
+                dimensions=dimensions,
+                dtype=dtype,
+                attributes=attributes,
+                vgrid=vgrd,  # type: ignore[arg-type]
             )
 
         @classmethod
@@ -338,7 +344,10 @@ class TimedVArraySchemaParams:
             dimensions, dtype, attributes = TimedSchemaParams.OK.all_attrs()
             vgrd = vgrid or [1] * len(dimensions)
             return VArraySchema(
-                dimensions=dimensions, dtype=dtype, attributes=attributes, vgrid=vgrd  # type: ignore[arg-type]
+                dimensions=dimensions,
+                dtype=dtype,
+                attributes=attributes,
+                vgrid=vgrd,  # type: ignore[arg-type]
             )
 
         @classmethod
@@ -346,7 +355,10 @@ class TimedVArraySchemaParams:
             dimensions, dtype, attributes = TimedSchemaParams.OK.vgrid_primary_attributes()
             vgrd = vgrid or [1] * len(dimensions)
             return VArraySchema(
-                dimensions=dimensions, dtype=dtype, attributes=attributes, vgrid=vgrd  # type: ignore[arg-type]
+                dimensions=dimensions,
+                dtype=dtype,
+                attributes=attributes,
+                vgrid=vgrd,  # type: ignore[arg-type]
             )
 
         @classmethod
@@ -354,13 +366,16 @@ class TimedVArraySchemaParams:
             dimensions, dtype, attributes = TimedSchemaParams.OK.vgrid_all_attrs()
             vgrd = vgrid or [1] * len(dimensions)
             return VArraySchema(
-                dimensions=dimensions, dtype=dtype, attributes=attributes, vgrid=vgrd  # type: ignore[arg-type]
+                dimensions=dimensions,
+                dtype=dtype,
+                attributes=attributes,
+                vgrid=vgrd,  # type: ignore[arg-type]
             )
 
         @classmethod
         def __make_schema_with_attributes(
             cls,
-            start_value: Union[str, datetime],
+            start_value: str | datetime,
             primary: bool = None,
             vgrid=None,
             create_as_list=False,
@@ -388,7 +403,9 @@ class TimedVArraySchemaParams:
             :return:
             """
             return cls.__make_schema_with_attributes(
-                start_value="$dt", primary=None, create_as_list=create_as_list  # type: ignore[arg-type]
+                start_value="$dt",
+                primary=None,
+                create_as_list=create_as_list,  # type: ignore[arg-type]
             )
 
         @classmethod
@@ -438,7 +455,7 @@ class TypedSchemaParams:
     """Provides functionality to generate list with different types"""
 
     @classmethod
-    def _generate_types(cls, base_dict: dict, key: str, *, exception_types: List[type] = None) -> List[dict]:
+    def _generate_types(cls, base_dict: dict, key: str, *, exception_types: list[type] = None) -> list[dict]:
         """Generates different types.
 
         :param base_dict: Dict with fixed values
@@ -473,7 +490,7 @@ class ArraySchemaCreationParams(SchemaParams, TypedSchemaParams):
     """Params for creation an array schema."""
 
     @classmethod
-    def WRONG_params_dataclass_raises(cls) -> List[Any]:
+    def WRONG_params_dataclass_raises(cls) -> list[Any]:
         """Returns wrong params for array_schema."""
         dimensions, dtype = cls._get_dims_dtype()
 
@@ -495,7 +512,7 @@ class VArraySchemaCreationParams(SchemaParams, TypedSchemaParams):
     """Params for creation a varray schema."""
 
     @classmethod
-    def WRONG_params_dataclass_raises(cls) -> List[Any]:
+    def WRONG_params_dataclass_raises(cls) -> list[Any]:
         """Returns wrong params for array_schema."""
         dimensions, dtype = cls._get_dims_dtype()
         vgrid = (1, 1, 1)
@@ -524,7 +541,7 @@ class DimensionSchemaCreationParams(TypedSchemaParams):
     """Params for creation dimension schema."""
 
     @classmethod
-    def WRONG_params_dataclass_raises(cls) -> List[Any]:
+    def WRONG_params_dataclass_raises(cls) -> list[Any]:
         """Returns wrong params for dimension schema."""
 
         return [
@@ -555,7 +572,7 @@ class TimeDimensionSchemaCreationParams(TypedSchemaParams):
     """Params for creation dimension schema."""
 
     @classmethod
-    def WRONG_params_dataclass_raises(cls) -> List[Any]:
+    def WRONG_params_dataclass_raises(cls) -> list[Any]:
         """Returns wrong params for dimension schema.
 
         start_value: datetime | str

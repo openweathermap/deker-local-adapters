@@ -19,7 +19,6 @@ import os
 import sys
 
 from pathlib import Path
-from typing import Optional, Tuple, Type, Union
 
 import h5py
 import hdf5plugin
@@ -49,7 +48,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
     file_ext: str = ".hdf5"
     storage_options = HDF5Options
 
-    def create(self, path: Path, array_shape: Tuple[int, ...], metadata: Union[str, bytes, dict]) -> None:
+    def create(self, path: Path, array_shape: tuple[int, ...], metadata: str | bytes | dict) -> None:
         """Create new hdf5 file with metadata.
 
         :param path: path to hdf5 file
@@ -86,10 +85,10 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
     def read_data(
         self,
         path: Path,
-        array_shape: Tuple[int, ...],
+        array_shape: tuple[int, ...],
         bounds: Slice,
         fill_value: Numeric,
-        dtype: Type[Numeric],
+        dtype: type[Numeric],
     ) -> ndarray:
         """Read array data from hdf5 file.
 
@@ -98,6 +97,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         :param bounds: array slice
         :param fill_value: Value to fill empty array
         :param dtype: array dtype
+        :returns: data within the bounds, filled with ``fill_value`` where the array is empty
         """
         self.logger.debug(f"trying to read data from {path}")
         with h5py.File(path, mode="r", locking=False) as f:
@@ -115,6 +115,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         """Read array metadata from hdf5 file.
 
         :param path: path to hdf5 file
+        :returns: array metadata decoded from the ``meta`` dataset
         """
         self.logger.debug(f"trying to read meta from {path}")
         with h5py.File(path, mode="r", locking=False) as f:
@@ -133,10 +134,10 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         path: Path,
         bounds: Slice,
         data: ndarray,
-        dtype: Type[Numeric],
+        dtype: type[Numeric],
         shape: tuple,
         fill_value: Numeric,
-        collection_options: Optional[HDF5Options],
+        collection_options: HDF5Options | None,
     ) -> None:
         """Update array data in hdf5 file.
 
@@ -174,7 +175,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
 
                 updated_empty_cells += fill_value_in_data
 
-                ds: Optional[Dataset] = f.get("data")
+                ds: Dataset | None = f.get("data")
 
                 if updated_empty_cells >= total_cells:
                     if ds:
@@ -219,6 +220,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
 
         :param path: path to hdf5 file
         :param attributes: new custom attributes
+        :returns: the stored custom attributes
         """
         try:
             self.logger.debug(f"trying to update meta in {path}")
@@ -247,7 +249,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
             self.logger.exception(e)
             raise e
 
-    def clear_data(self, path: Path, array_shape: Tuple[int, ...], bounds: Slice, fill_value: Numeric) -> None:
+    def clear_data(self, path: Path, array_shape: tuple[int, ...], bounds: Slice, fill_value: Numeric) -> None:
         """Clear array data in hdf5 file.
 
         :param path: path to hdf5 file

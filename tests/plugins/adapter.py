@@ -1,4 +1,4 @@
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from typing import Type
 
 import pytest
@@ -21,7 +21,7 @@ def collection_adapter(ctx) -> LocalCollectionAdapter:
 
 
 @pytest.fixture()
-def storage_adapter() -> Type[BaseStorageAdapter]:
+def storage_adapter() -> type[BaseStorageAdapter]:
     return HDF5StorageAdapter
 
 
@@ -36,7 +36,7 @@ def local_array_adapter(array_collection: Collection, ctx: CTX) -> LocalArrayAda
         collection_options=array_collection.options,
         ctx=ctx,
         storage_adapter=HDF5StorageAdapter,
-        executor=ThreadPoolExecutor(max_workers=1),
+        executor=ProcessPoolExecutor(max_workers=1),
     )
 
 
@@ -45,6 +45,6 @@ def local_varray_adapter(varray_collection: Collection, ctx: CTX) -> LocalVArray
     return LocalVArrayAdapter(
         collection_path=varray_collection.path,
         ctx=ctx,
-        executor=ThreadPoolExecutor(max_workers=1),
+        executor=ProcessPoolExecutor(max_workers=1),
         storage_adapter=HDF5StorageAdapter,
     )

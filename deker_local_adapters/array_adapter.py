@@ -17,8 +17,9 @@
 import logging
 import os
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generator, Optional, Tuple, Type, Union
+from typing import TYPE_CHECKING, Any, Optional
 
 from deker.ABC.base_adapters import BaseArrayAdapter
 from deker.arrays import Array
@@ -35,7 +36,7 @@ from numpy import ndarray
 from deker_local_adapters.mixin import LocalAdapterMixin
 
 if TYPE_CHECKING:
-    from concurrent.futures import ThreadPoolExecutor
+    from concurrent.futures import ProcessPoolExecutor
 
     from deker.ABC import BaseStorageAdapter
     from deker.ABC.base_collection import BaseCollectionOptions
@@ -49,8 +50,8 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
         self,
         collection_path: Path,
         ctx: "CTX",
-        storage_adapter: Type["BaseStorageAdapter"],
-        executor: "ThreadPoolExecutor",
+        storage_adapter: type["BaseStorageAdapter"],
+        executor: "ProcessPoolExecutor",
         collection_options: Optional["BaseCollectionOptions"] = None,
     ) -> None:
         self.collection_options = collection_options
@@ -64,9 +65,9 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
     def _get_symlink_filename(
         self,
         vid: str,
-        vpos: Tuple[int, ...],
-        array_primary_attributes_schema: Tuple[AttributeSchema, ...],
-    ) -> Optional[Path]:
+        vpos: tuple[int, ...],
+        array_primary_attributes_schema: tuple[AttributeSchema, ...],
+    ) -> Path | None:
         sympath_to_dir = get_symlink_path(
             self.collection_path / self.symlinks_dir,
             array_primary_attributes_schema,
@@ -112,11 +113,12 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
 
     @check_ctx_state
     @ReadArrayLock()
-    def read_data(self, array: Array, bounds: Slice) -> Union[Numeric, ndarray]:
+    def read_data(self, array: Array, bounds: Slice) -> Numeric | ndarray:
         """Read data from the existing array.
 
         :param array: Array instance
         :param bounds: array bounds to read
+        :returns: data within the bounds; a scalar for a single cell
         """
         filename = self._get_main_path_to_file(array)
 
@@ -124,10 +126,11 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
 
     @check_ctx_state
     @ReadArrayLock()
-    def read_meta(self, array: Union[Array, Path]) -> ArrayMeta:
+    def read_meta(self, array: Array | Path) -> ArrayMeta:
         """Read array metadata.
 
         :param array: Array instance
+        :returns: array metadata
         """
         if isinstance(array, Array):
             filename = self._get_main_path_to_file(array)
@@ -201,6 +204,7 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
         """Iterate over all the Arrays symlinks in VArray.
 
         :param vid: Array vid attribute value
+        :yields: paths to the Arrays symlinks
         """
         root_path = self.collection_path / self.symlinks_dir / vid
         for root, _, files in os.walk(root_path):

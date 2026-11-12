@@ -19,8 +19,9 @@ import logging
 import os
 import shutil
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Generator, Optional
+from typing import TYPE_CHECKING
 
 from deker.ABC.base_adapters import BaseCollectionAdapter
 from deker.ctx import CTX
@@ -42,10 +43,11 @@ class LocalCollectionAdapter(BaseCollectionAdapter):
         self.file_ext = ".json"
         self.collections_resource.mkdir(parents=True, exist_ok=True)
 
-    def __create_path(self, name: str) -> Optional[Path]:
+    def __create_path(self, name: str) -> Path | None:
         """Create Collection path in the file system.
 
         :param name: Collection name
+        :returns: path to the collection directory
         """
         path = self.collections_resource / name
         try:
@@ -54,7 +56,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter):
         except FileExistsError:
             raise DekerCollectionAlreadyExistsError(f"Collection {name} already exists")
 
-    def __create(self, coll_name: str, data: dict, coll_path: Optional[Path]) -> None:
+    def __create(self, coll_name: str, data: dict, coll_path: Path | None) -> None:
         if coll_path and coll_path.exists():
             path = coll_path / (coll_name + self.file_ext)
             with open(path, mode="w") as f:
@@ -84,6 +86,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter):
         """Read collection metadata.
 
         :param name: Collection name
+        :returns: collection metadata as a dict
         """
         coll_path = self.collections_resource / name
         path = coll_path / (name + self.file_ext)
@@ -136,6 +139,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter):
         """Check if collection was deleted.
 
         :param collection: Collection to check
+        :returns: ``True`` if the collection directory no longer exists
         """
         # If it does not exist, then it's not created or deleted
         return not collection.path.exists()

@@ -10,7 +10,7 @@ from deker.schemas import ArraySchema, AttributeSchema, DimensionSchema, TimeDim
 
 
 @pytest.fixture()
-def dimensions() -> List[BaseDimensionSchema]:
+def dimensions() -> list[BaseDimensionSchema]:
     """Dimensions for array schema."""
     return [
         DimensionSchema(name="x", size=10),
@@ -25,7 +25,7 @@ def dimensions() -> List[BaseDimensionSchema]:
 
 
 @pytest.fixture()
-def dimensions_with_string_time() -> List[BaseDimensionSchema]:
+def dimensions_with_string_time() -> list[BaseDimensionSchema]:
     """Dimensions for array schema."""
     return [
         DimensionSchema(name="x", size=10),
@@ -40,7 +40,7 @@ def dimensions_with_string_time() -> List[BaseDimensionSchema]:
 
 
 @pytest.fixture()
-def array_schema(dimensions: List[DimensionSchema]) -> ArraySchema:
+def array_schema(dimensions: list[DimensionSchema]) -> ArraySchema:
     """Creates a simple array schema.
 
     :param dimensions: Dimensions of array schema
@@ -49,7 +49,7 @@ def array_schema(dimensions: List[DimensionSchema]) -> ArraySchema:
 
 
 @pytest.fixture()
-def array_schema_with_attributes(dimensions_with_string_time: List[DimensionSchema]) -> ArraySchema:
+def array_schema_with_attributes(dimensions_with_string_time: list[DimensionSchema]) -> ArraySchema:
     """Creates an array schema with extra primary attributes.
 
     :param dimensions_with_string_time: Dimensions of array schema
@@ -66,14 +66,14 @@ def array_schema_with_attributes(dimensions_with_string_time: List[DimensionSche
 
 
 @pytest.fixture()
-def varray_schema(dimensions: List[DimensionSchema]) -> VArraySchema:
+def varray_schema(dimensions: list[DimensionSchema]) -> VArraySchema:
     """Creates a VArray schema."""
     return VArraySchema(dimensions=dimensions, dtype=float, vgrid=[2] * len(dimensions))  # type: ignore[arg-type]
 
 
 @pytest.fixture()
 def varray_schema_with_attributes(
-    dimensions_with_string_time: List[DimensionSchema],
+    dimensions_with_string_time: list[DimensionSchema],
 ) -> VArraySchema:
     """Creates an array schema with extra primary attributes.
 

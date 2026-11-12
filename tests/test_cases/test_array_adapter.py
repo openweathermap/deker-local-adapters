@@ -328,7 +328,7 @@ class TestArrayAdapter:
         :param array_with_attributes: Array which contains some primary attributes
         """
         main_tree, rest = array_with_attributes.id.split("-", 1)
-        main_tree = os.path.sep.join((s for s in main_tree))
+        main_tree = os.path.sep.join(s for s in main_tree)
         main_path = (
             array_with_attributes._adapter.collection_path / array_with_attributes._adapter.data_dir / main_tree / rest
         )
@@ -365,7 +365,7 @@ class TestArrayAdapter:
         arrays = [array_collection.create() for _ in range(10)]
         metas = [json.loads(array._create_meta()) for array in arrays]
         adapter: LocalArrayAdapter = arrays[0]._adapter
-        inner_metas = [meta for meta in adapter]
+        inner_metas = [*adapter]
         assert len(inner_metas) == len(metas)
         assert all(inner_meta in metas for inner_meta in inner_metas)
 

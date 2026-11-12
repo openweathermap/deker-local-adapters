@@ -32,7 +32,7 @@ NumericDtypes = [
 def random_string() -> str:
     """Get random string with length from 1 to 20."""
     strings = (digits + ascii_letters + punctuation).replace("/", "").replace("\\", "").replace("$", "")
-    return "".join((random.choice(strings) for _ in range(random.randint(5, 20))))
+    return "".join(random.choice(strings) for _ in range(random.randint(5, 20)))
 
 
 def _random_positive_int() -> int:
@@ -55,7 +55,7 @@ def _random_negative_float() -> float:
     return random.uniform(-6, -1)
 
 
-def random_step() -> Union[int, float]:
+def random_step() -> int | float:
     """Get random step value from -6 to 6."""
     return random.choice(
         [

@@ -2,7 +2,7 @@ import logging
 import platform
 import shutil
 
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import ProcessPoolExecutor
 from multiprocessing import cpu_count
 from pathlib import Path
 from random import choices
@@ -39,9 +39,9 @@ def workers() -> int:
 
 
 @pytest.fixture()
-def executor(workers: int) -> ThreadPoolExecutor:
+def executor(workers: int) -> ProcessPoolExecutor:
     """Creates thread executor."""
-    return ThreadPoolExecutor(workers)
+    return ProcessPoolExecutor(workers)
 
 
 @pytest.fixture()
@@ -91,11 +91,11 @@ def uri(root_path) -> Uri:
 @pytest.fixture()
 def ctx(uri: Uri, config, storage_adapter, workers) -> CTX:
     """Creates Client context."""
-    return CTX(uri, config, storage_adapter, ThreadPoolExecutor(workers))
+    return CTX(uri, config, storage_adapter, ProcessPoolExecutor(workers))
 
 
 @pytest.fixture()
-def client(root_path: Path, storage_adapter: Type[BaseStorageAdapter], workers: int, executor) -> Client:
+def client(root_path: Path, storage_adapter: type[BaseStorageAdapter], workers: int, executor) -> Client:
     """Creates Client object and init all connections.
 
     :param root_path: path to directory with collections fixture
