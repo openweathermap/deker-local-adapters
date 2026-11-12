@@ -301,3 +301,46 @@ class TestMetaDataset:
         stored, itemsize = self.meta_bytes(array_file)
         assert itemsize == len(stored)
         assert adapter.read_meta(array_file)["custom_attributes"] == attributes
+
+
+class TestFileSpace:
+    """New files persist their free-space manager, so ``meta`` updates reuse space instead of growing the file."""
+
+    def test_new_file_uses_persistent_free_space_manager(self, array_file):
+        with h5py.File(array_file, "r", locking=False) as f:
+            strategy, persist, _ = f.id.get_create_plist().get_file_space_strategy()
+        assert strategy == h5py.h5f.FSPACE_STRATEGY_FSM_AGGR
+        assert persist
+
+    @staticmethod
+    def update_meta_many_times(adapter: HDF5StorageAdapter, path: Path, times: int) -> list[int]:
+        sizes = []
+        for i in range(times):
+            adapter.update_meta_custom_attributes(path, {"i": i % 10, "pad": "x" * (i % 5)})
+            sizes.append(path.stat().st_size)
+        return sizes
+
+    def test_meta_updates_do_not_grow_the_file(self, adapter, array_file):
+        warmup = self.update_meta_many_times(adapter, array_file, 10)
+        later = self.update_meta_many_times(adapter, array_file, 50)
+        assert max(later) <= max(warmup)
+
+    def test_legacy_file_grows_on_meta_updates(self, adapter, tmp_path):
+        """Contrast: without the persistent free-space manager every ``meta`` update leaks the old space."""
+        path = tmp_path / "legacy.hdf5"
+        with h5py.File(path, "w", locking=False) as f:
+            f.create_dataset("meta", data=b'{"id": "legacy"}', dtype="S16", shape=())
+            f.create_dataset("empty_cells", data=TOTAL, shape=())
+        warmup = self.update_meta_many_times(adapter, path, 10)
+        later = self.update_meta_many_times(adapter, path, 50)
+        assert min(later) > max(warmup)
+
+    def test_old_files_without_the_strategy_are_still_served(self, adapter, tmp_path):
+        path = tmp_path / "legacy.hdf5"
+        with h5py.File(path, "w", locking=False) as f:
+            f.create_dataset("meta", data=b'{"id": "legacy"}', dtype="S16", shape=())
+            f.create_dataset("empty_cells", data=TOTAL, shape=())
+        assert adapter.read_meta(path) == {"id": "legacy"}
+        write(adapter, path, np.index_exp[0:10], np.arange(10))
+        assert adapter.update_meta_custom_attributes(path, {"a": 1}) == {"a": 1}
+        assert real_values(path) == 10

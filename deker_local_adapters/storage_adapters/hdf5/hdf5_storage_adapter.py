@@ -102,7 +102,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         """
         try:
             self.logger.debug(f"trying to create {path}")
-            with h5py.File(path, "w", locking=False) as f:
+            # free space released by dataset recreation (``meta`` updates) is tracked across file opens
+            # and reused instead of growing the file; readable by HDF5 >= 1.10.1 (any h5py 3.x)
+            with h5py.File(path, "w", locking=False, fs_strategy="fsm", fs_persist=True) as f:
                 self.logger.debug(f"{path} opened in 'w'-mode")
                 if not isinstance(metadata, (str, bytes)):
                     metadata = json.dumps(metadata, default=str)
