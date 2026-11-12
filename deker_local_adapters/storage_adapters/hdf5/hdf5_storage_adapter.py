@@ -48,6 +48,39 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
     file_ext: str = ".hdf5"
     storage_options = HDF5Options
 
+    @staticmethod
+    def _count_fill_values(values: ndarray | Numeric, fill_value: Numeric) -> int:
+        """Count the cells equal to ``fill_value`` (``NaN`` is compared as ``NaN``).
+
+        :param values: array or a scalar to count in
+        :param fill_value: array fill_value
+        :returns: number of cells holding the fill_value
+        """
+        array = np.asarray(values)
+        if np.isnan(fill_value):
+            return int(np.count_nonzero(np.isnan(array)))
+        return int(np.count_nonzero(array == fill_value))
+
+    @classmethod
+    def _delete_data_if_empty(cls, f: h5py.File, ds: Dataset, fill_value: Numeric, total_cells: int) -> int:
+        """Delete the ``data`` dataset if every cell holds the fill_value; return the true number of empty cells.
+
+        The ``empty_cells`` counter is the only hint that the array may be empty, and it may have drifted in files
+        written by older versions, so the dataset is scanned before the irreversible deletion. If it is not empty,
+        the counter is corrected instead.
+
+        :param f: opened hdf5 file
+        :param ds: the ``data`` dataset
+        :param fill_value: array fill_value
+        :param total_cells: number of cells in the array
+        :returns: number of empty cells in the array after the operation
+        """
+        empty_cells = cls._count_fill_values(ds[()], fill_value)
+        if empty_cells >= total_cells:
+            del f["data"]
+            return total_cells
+        return empty_cells
+
     def create(self, path: Path, array_shape: tuple[int, ...], metadata: str | bytes | dict) -> None:
         """Create new hdf5 file with metadata.
 
@@ -155,35 +188,19 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 self.logger.debug(f"{path} opened in 'r+'-mode")
                 empty_cells_ds: Dataset = f["empty_cells"]
                 total_cells = calculate_total_cells_in_array(shape)
-
                 subset_shape = create_shape_from_slice(shape, bounds)
                 subset_cells = calculate_total_cells_in_array(subset_shape)
-                empty_cells = empty_cells_ds[()] - subset_cells
-
-                updated_empty_cells = empty_cells if empty_cells > 0 else 0
-
-                if np.isnan(fill_value):
-                    if isinstance(data, ndarray):
-                        fill_value_in_data = np.count_nonzero(np.isnan(data))
-                    else:
-                        fill_value_in_data = int(np.isnan(data))
-                else:
-                    if isinstance(data, ndarray):
-                        fill_value_in_data = len(data[data == fill_value])
-                    else:
-                        fill_value_in_data = int(data == fill_value)
-
-                updated_empty_cells += fill_value_in_data
-
                 ds: Dataset | None = f.get("data")
 
-                if updated_empty_cells >= total_cells:
-                    if ds:
-                        del f["data"]
-                    fresh_empty_cells = total_cells
-                else:
-                    if ds:
-                        ds[bounds] = data
+                # the counter moves by the difference between the empty cells in the region before and after the write
+                fill_values_before = subset_cells if ds is None else self._count_fill_values(ds[bounds], fill_value)
+                fill_values_after = self._count_fill_values(np.broadcast_to(np.asarray(data), subset_shape), fill_value)
+                empty_cells = int(empty_cells_ds[()]) - fill_values_before + fill_values_after
+
+                if ds is None:
+                    if empty_cells >= total_cells:
+                        # writing fill values into an array that has no data yet: nothing to store
+                        empty_cells = total_cells
                     else:
                         to_storage: ndarray = ndarray(shape=shape, dtype=dtype)
                         to_storage.fill(fill_value)
@@ -203,11 +220,14 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                             )
 
                         ds = f.create_dataset("data", **ds_kwargs)
-
+                        ds.flush()
+                else:
+                    ds[bounds] = data
                     ds.flush()
-                    fresh_empty_cells = updated_empty_cells
+                    if empty_cells >= total_cells:
+                        empty_cells = self._delete_data_if_empty(f, ds, fill_value, total_cells)
 
-                empty_cells_ds[()] = fresh_empty_cells
+                empty_cells_ds[()] = empty_cells
                 empty_cells_ds.flush()
                 f.flush()
             self.logger.debug(f"{path} data updated OK and closed")
@@ -261,23 +281,27 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
             self.logger.debug(f"trying to clear data in {path}")
             with h5py.File(path, "r+", locking=False) as f:
                 self.logger.debug(f"{path} opened in 'r+'-mode")
-                if ds := f.get("data"):
+                ds: Dataset | None = f.get("data")
+                if ds is not None:
+                    empty_cells_ds: Dataset = f["empty_cells"]
+                    total_cells = calculate_total_cells_in_array(array_shape)
                     subset_shape = create_shape_from_slice(array_shape, bounds)
 
-                    empty_cells_ds: Dataset = f["empty_cells"]
-                    empty_cells = empty_cells_ds[()]
-                    total_cells = calculate_total_cells_in_array(array_shape)
-                    subset_cells = calculate_total_cells_in_array(subset_shape)
-                    updated_empty_cells = empty_cells + subset_cells
-
-                    if ds.shape == subset_shape or updated_empty_cells >= total_cells:
+                    if ds.shape == subset_shape:
+                        # the whole array is cleared
                         del f["data"]
-                        empty_cells_ds[()] = total_cells
+                        empty_cells = total_cells
                     else:
+                        # only the cells that held data become empty; the ones already empty do not count twice
+                        subset_cells = calculate_total_cells_in_array(subset_shape)
+                        fill_values_before = self._count_fill_values(ds[bounds], fill_value)
+                        empty_cells = int(empty_cells_ds[()]) + subset_cells - fill_values_before
                         ds[bounds] = fill_value
                         ds.flush()
-                        empty_cells_ds[()] = updated_empty_cells
+                        if empty_cells >= total_cells:
+                            empty_cells = self._delete_data_if_empty(f, ds, fill_value, total_cells)
 
+                    empty_cells_ds[()] = empty_cells
                     empty_cells_ds.flush()
                     f.flush()
             self.logger.debug(f"{path} data cleared OK and closed")

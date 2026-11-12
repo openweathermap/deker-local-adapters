@@ -8,7 +8,7 @@ import pytest
 
 from deker.client import Client
 from deker.collection import Collection
-from deker.errors import DekerMemoryError
+from deker.errors import DekerCollectionAlreadyExistsError, DekerCollectionNotExistsError, DekerMemoryError
 from deker.schemas import ArraySchema, DimensionSchema
 
 from tests.parameters.common import random_string
@@ -221,6 +221,44 @@ class TestCollectionAdapter:
         coll_names = {coll["name"] for coll in adapter}
         assert names.issubset(coll_names)
         assert names - coll_names == set()
+
+
+class TestCollectionAdapterEdges:
+    def test_create_path_raises_if_directory_exists(self, collection_adapter: LocalCollectionAdapter):
+        name = "already-there"
+        collection_adapter._LocalCollectionAdapter__create_path(name)
+        with pytest.raises(DekerCollectionAlreadyExistsError):
+            collection_adapter._LocalCollectionAdapter__create_path(name)
+
+    def test_create_writes_nothing_without_path(self, collection_adapter: LocalCollectionAdapter, root_path: Path):
+        collection_adapter._LocalCollectionAdapter__create("ghost", {}, None)
+        assert not list(root_path.rglob("ghost*"))
+
+    def test_read_raises_for_missing_collection(self, collection_adapter: LocalCollectionAdapter):
+        with pytest.raises(DekerCollectionNotExistsError):
+            collection_adapter.read("no-such-collection")
+
+    def test_clear_removes_foreign_files_and_directories(self, client: Client, array_collection: Collection):
+        foreign_file = array_collection.path / "stray.txt"
+        foreign_file.write_text("x")
+        foreign_dir = array_collection.path / "stray_dir"
+        foreign_dir.mkdir()
+        (foreign_dir / "inner.txt").write_text("x")
+        array_collection.clear()
+        assert not foreign_file.exists()
+        assert not foreign_dir.exists()
+        assert (array_collection.path / (array_collection.name + ".json")).exists()
+
+    def test_create_skips_memory_check_when_configured(self, root_path, array_schema, executor):
+        from tests.parameters.uri import embedded_uri
+
+        client = Client(embedded_uri(root_path), executor=executor, skip_collection_create_memory_check=True)
+        collection = client.create_collection("no-memory-check", array_schema)
+        try:
+            assert collection.path.exists()
+        finally:
+            collection.delete()
+            client.close()
 
 
 if __name__ == "__main__":

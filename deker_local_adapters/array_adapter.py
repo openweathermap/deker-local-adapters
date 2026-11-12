@@ -220,15 +220,10 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
         :param vid: VArray id
         :param collection: collection instance
         """
-
-        def _delete(array: Array) -> None:
-            array.delete()
-
         try:
             metas = self.executor.map(self.read_meta, self._adapter_iter(vid))
-            if metas:
-                arrays = [Array._create_from_meta(collection, meta, self) for meta in metas]
-                list(self.executor.map(_delete, arrays))
+            arrays = [Array._create_from_meta(collection, meta, self) for meta in metas]
+            list(self.executor.map(self.delete, arrays))
         except Exception as e:
             self.logger.exception(e)
             raise e

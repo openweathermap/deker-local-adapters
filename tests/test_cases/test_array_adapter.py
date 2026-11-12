@@ -10,7 +10,7 @@ import h5py
 import numpy as np
 import pytest
 
-from deker.arrays import Array
+from deker.arrays import Array, VArray
 from deker.client import Client
 from deker.collection import Collection
 from deker.errors import DekerArrayError, DekerArrayTypeError, DekerValidationError
@@ -389,6 +389,64 @@ class TestArrayAdapter:
             varray_collection.arrays.create({"vid": _id, "v_position": (0, 0, 0)})
 
         assert f"VArray with id={_id} doesn't exist" == str(e.value)
+
+
+class TestArrayAdapterEdges:
+    @pytest.fixture()
+    def varray_tiles_adapter(self, varray_collection: Collection, ctx) -> LocalArrayAdapter:
+        """Adapter of the Arrays (tiles) that belong to the VArray collection."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        return LocalArrayAdapter(
+            collection_path=varray_collection.path,
+            collection_options=varray_collection.options,
+            ctx=ctx,
+            storage_adapter=HDF5StorageAdapter,
+            executor=ThreadPoolExecutor(max_workers=1),
+        )
+
+    def test_symlink_filename_of_an_existing_tile(
+        self, varray_tiles_adapter: LocalArrayAdapter, inserted_varray: VArray, varray_collection: Collection
+    ):
+        symlink = next(iter(varray_tiles_adapter._adapter_iter(inserted_varray.id)))
+        position = tuple(int(i) for i in symlink.parent.name.split("-"))
+        filename = varray_tiles_adapter._get_symlink_filename(
+            inserted_varray.id, position, varray_collection.array_schema.primary_attributes
+        )
+        assert filename == symlink
+
+    def test_symlink_filename_of_an_empty_tile_directory(
+        self, varray_tiles_adapter: LocalArrayAdapter, inserted_varray: VArray, varray_collection: Collection
+    ):
+        symlink = next(iter(varray_tiles_adapter._adapter_iter(inserted_varray.id)))
+        position = tuple(int(i) for i in symlink.parent.name.split("-"))
+        symlink.unlink()
+        assert (
+            varray_tiles_adapter._get_symlink_filename(
+                inserted_varray.id, position, varray_collection.array_schema.primary_attributes
+            )
+            is None
+        )
+
+    def test_symlink_filename_of_a_missing_tile(
+        self, varray_tiles_adapter: LocalArrayAdapter, inserted_varray: VArray, varray_collection: Collection
+    ):
+        position = (99,) * len(inserted_varray.vgrid)
+        assert (
+            varray_tiles_adapter._get_symlink_filename(
+                inserted_varray.id, position, varray_collection.array_schema.primary_attributes
+            )
+            is None
+        )
+
+    def test_adapter_iter_skips_foreign_files(
+        self, varray_tiles_adapter: LocalArrayAdapter, inserted_varray: VArray, varray_collection: Collection
+    ):
+        root = varray_collection.path / varray_tiles_adapter.symlinks_dir / inserted_varray.id
+        (root / "stray.lock").write_text("x")
+        symlinks = list(varray_tiles_adapter._adapter_iter(inserted_varray.id))
+        assert symlinks
+        assert all(s.name.endswith(varray_tiles_adapter.file_ext) for s in symlinks)
 
 
 if __name__ == "__main__":

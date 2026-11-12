@@ -194,7 +194,7 @@ class TestActions:
         varrays = [varray_collection.create() for _ in range(10)]
         metas = [json.loads(varray._create_meta()) for varray in varrays]
         adapter: LocalVArrayAdapter = varrays[0]._adapter
-        inner_metas = [meta for meta in adapter]
+        inner_metas = [*adapter]
         assert len(inner_metas) == len(metas)
         assert all(inner_meta in metas for inner_meta in inner_metas)
 

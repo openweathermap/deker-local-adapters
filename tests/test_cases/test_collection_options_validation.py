@@ -256,5 +256,64 @@ class TestOptions:
             collection.delete()
 
 
+class TestHDF5OptionsRepr:
+    def test_compression_opts_repr_and_dict(self):
+        opts = HDF5CompressionOpts(compression="gzip", compression_opts=9)
+        assert opts.as_dict == {"compression": "gzip", "compression_opts": 9}
+        assert repr(opts) == "HDF5CompressionOpts(compression=gzip, compression_opts=9)"
+        assert str(opts) == repr(opts)
+
+    def test_options_repr_and_default_compression(self):
+        opts = HDF5Options(chunks=True)
+        assert opts.compression_opts == HDF5CompressionOpts(compression=None, compression_opts=None)
+        assert repr(opts).startswith("HDF5Options(chunks=True, compression_opts=HDF5CompressionOpts(")
+        assert str(opts) == repr(opts)
+
+
+class TestHDF5OptionsProcessing:
+    """``_process_options`` turns the dict stored in the collection meta back into HDF5Options parameters."""
+
+    @pytest.mark.parametrize(
+        ("stored", "expected"),
+        [
+            ({"compression": {"compression": "none", "options": ()}}, (None, None)),
+            ({"compression": {"compression": "gzip", "options": ("9",)}}, ("gzip", 9)),
+            ({"compression": {"compression": "gzip", "options": ()}}, ("gzip", None)),
+            ({"compression": {"compression": "szip", "options": ("ec", "8")}}, ("szip", ("ec", 8))),
+            ({"compression": {"compression": "szip", "options": ()}}, ("szip", None)),
+            ({"compression": {"compression": "lzf", "options": ()}}, ("lzf", None)),
+            (
+                {"compression": {"compression": "32001", "options": ("0", "0", "0", "0", "5", "1", "1")}},
+                (32001, (0, 0, 0, 0, 5, 1, 1)),
+            ),
+            ({"compression": {"compression": None, "options": ()}}, (None, None)),
+        ],
+    )
+    def test_compression_is_restored(self, stored, expected):
+        params = HDF5Options._process_options(stored)
+        opts = params["compression_opts"]
+        assert (opts.compression, opts.compression_opts) == expected
+
+    def test_lzf_does_not_accept_options(self):
+        with pytest.raises(ValueError, match="LZF"):
+            HDF5Options._process_options({"compression": {"compression": "lzf", "options": ("1",)}})
+
+    @pytest.mark.parametrize(
+        ("stored", "expected"),
+        [
+            ({"chunks": None}, None),
+            ({"chunks": {"mode": "none", "size": None}}, None),
+            ({"chunks": {"mode": "true", "size": None}}, True),
+            ({"chunks": {"mode": "manual", "size": (10, 10)}}, (10, 10)),
+        ],
+    )
+    def test_chunks_are_restored(self, stored, expected):
+        assert HDF5Options._process_options(stored)["chunks"] == expected
+
+    def test_empty_options(self):
+        assert HDF5Options._process_options(None) == {}
+        assert HDF5Options._process_options({}) == {}
+
+
 if __name__ == "__main__":
     pytest.main()

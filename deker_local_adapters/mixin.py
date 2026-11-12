@@ -66,11 +66,12 @@ class LocalAdapterMixin:
 
             for file in (data, symlink):
                 if file.parent.exists():
-                    for folder in file.parents:
+                    # climbs up while the directories are empty; always stops at the data/symlinks directory
+                    for folder in file.parents:  # pragma: no branch
                         subs = os.listdir(folder)
                         if subs or any(str(folder).endswith(directory) for directory in self.dirs):
                             break
-                        if folder.exists():
+                        if folder.exists():  # pragma: no branch  # guard: listdir() above has just succeeded
                             os.rmdir(folder)
         except FileNotFoundError:
             pass

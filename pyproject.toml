@@ -91,7 +91,7 @@ dev = [
     "pytest-sugar>=1.1.1",
     "pytest-random-order>=1.2.0",
     "pytest-mock>=3.17.0",
-    "deker>=1.2.0b1,<2",
+    "deker>=1.2.0,<2",
 ]
 docs = [
     "docutils>=0.21.2",
@@ -272,7 +272,7 @@ omit = [
 directory = "tests/code_coverage"
 
 [tool.coverage.report]
-fail_under=92
+fail_under=100
 exclude_lines = [
     "no cov",
     "pragma: no cover",

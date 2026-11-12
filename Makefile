@@ -3,7 +3,7 @@
 PACKAGE      := deker_local_adapters
 TESTS        := tests
 DOCS         := docs
-PY_FILES      = $(shell git ls-files '*.py')
+PY_FILES      = $(wildcard $(shell git ls-files '*.py'))
 TARGET_PYTHON := py310
 
 .PHONY: help install format lint typecheck docstrings docs-lint check test coverage ci pre-commit clean
