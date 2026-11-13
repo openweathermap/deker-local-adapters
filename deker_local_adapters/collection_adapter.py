@@ -135,6 +135,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter):
         """Return a path to the directory with collections."""
         return Path(self.uri.path) / self.ctx.config.collections_directory
 
+    @check_ctx_state
     def is_deleted(self, collection: "Collection") -> bool:
         """Check if collection was deleted.
 

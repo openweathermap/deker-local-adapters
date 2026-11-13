@@ -8,7 +8,12 @@ import pytest
 
 from deker.client import Client
 from deker.collection import Collection
-from deker.errors import DekerCollectionAlreadyExistsError, DekerCollectionNotExistsError, DekerMemoryError
+from deker.errors import (
+    DekerAdapterClosedError,
+    DekerCollectionAlreadyExistsError,
+    DekerCollectionNotExistsError,
+    DekerMemoryError,
+)
 from deker.schemas import ArraySchema, DimensionSchema
 
 from tests.parameters.common import random_string
@@ -221,6 +226,33 @@ class TestCollectionAdapter:
         coll_names = {coll["name"] for coll in adapter}
         assert names.issubset(coll_names)
         assert names - coll_names == set()
+
+
+class TestCollectionAdapterClosed:
+    @pytest.mark.parametrize("method", ["create", "delete", "clear", "is_deleted"])
+    def test_closed_adapter_raises(self, ctx, array_collection: Collection, method: str):
+        """Tests if a collection adapter of a closed context answers with DekerAdapterClosedError."""
+        adapter = LocalCollectionAdapter(ctx)
+        ctx.is_closed = True
+        try:
+            with pytest.raises(DekerAdapterClosedError):
+                getattr(adapter, method)(array_collection)
+            with pytest.raises(DekerAdapterClosedError):
+                adapter.read(array_collection.name)
+            with pytest.raises(DekerAdapterClosedError):
+                list(adapter)
+        finally:
+            ctx.is_closed = False
+
+    def test_closed_factory_raises(self, ctx, uri):
+        """Tests if a factory of a closed context gives no adapters."""
+        factory = AdaptersFactory(ctx, uri)
+        ctx.is_closed = True
+        try:
+            with pytest.raises(DekerAdapterClosedError):
+                factory.get_collection_adapter()
+        finally:
+            ctx.is_closed = False
 
 
 class TestCollectionAdapterEdges:
