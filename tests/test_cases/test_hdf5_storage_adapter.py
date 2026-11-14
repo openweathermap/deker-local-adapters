@@ -2,13 +2,17 @@
 
 import json
 
+from collections.abc import Iterator
 from pathlib import Path
+from typing import Any
 
 import h5py
 import numpy as np
 import pytest
 
 from deker.errors import DekerArrayError
+from deker_tools.slices import create_shape_from_slice
+from pytest_mock import MockerFixture
 
 from deker_local_adapters.storage_adapters.hdf5.hdf5_options import HDF5CompressionOpts, HDF5Options
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
@@ -187,10 +191,6 @@ class TestStorageAdapterBrokenFiles:
             HDF5StorageAdapter().update_meta_custom_attributes(file_without_meta, {"a": 1})
 
 
-if __name__ == "__main__":
-    pytest.main()
-
-
 class TestEmptyArrayRead:
     """``read_data`` on an array without a ``data`` dataset allocates only the requested region."""
 
@@ -344,3 +344,469 @@ class TestFileSpace:
         write(adapter, path, np.index_exp[0:10], np.arange(10))
         assert adapter.update_meta_custom_attributes(path, {"a": 1}) == {"a": 1}
         assert real_values(path) == 10
+
+
+class DatasetAccessLog:
+    """Record which HDF5 datasets are read from and written to through h5py while a test runs.
+
+    The h5py hooks must be plain functions (a bound method set on a class is not re-bound to the dataset),
+    so the hooks report to the log that is active for the current test.
+    """
+
+    active: "DatasetAccessLog | None" = None
+
+    def __init__(self) -> None:
+        self.reads: list[str] = []
+        self.writes: list[str] = []
+
+    @property
+    def data_reads(self) -> int:
+        """Number of reads of the ``data`` dataset."""
+        return self.reads.count("/data")
+
+    @property
+    def data_writes(self) -> int:
+        """Number of writes to the ``data`` dataset."""
+        return self.writes.count("/data")
+
+
+_dataset_read = h5py.Dataset.__getitem__
+_dataset_write = h5py.Dataset.__setitem__
+
+
+def _record_read(dataset: h5py.Dataset, args: Any, new_dtype: Any = None) -> Any:
+    """Record a read of the dataset in the active log and perform it.
+
+    :param dataset: dataset being read
+    :param args: index expression
+    :param new_dtype: dtype to read as
+    :returns: the read data
+    """
+    if DatasetAccessLog.active is not None:
+        DatasetAccessLog.active.reads.append(dataset.name)
+    return _dataset_read(dataset, args, new_dtype)
+
+
+def _record_write(dataset: h5py.Dataset, args: Any, value: Any) -> None:
+    """Record a write to the dataset in the active log and perform it.
+
+    :param dataset: dataset being written
+    :param args: index expression
+    :param value: data to write
+    """
+    if DatasetAccessLog.active is not None:
+        DatasetAccessLog.active.writes.append(dataset.name)
+    _dataset_write(dataset, args, value)
+
+
+@pytest.fixture
+def access(mocker: MockerFixture) -> Iterator[DatasetAccessLog]:
+    mocker.patch.object(h5py.Dataset, "__getitem__", _record_read)
+    mocker.patch.object(h5py.Dataset, "__setitem__", _record_write)
+    log = DatasetAccessLog()
+    DatasetAccessLog.active = log
+    try:
+        yield log
+    finally:
+        DatasetAccessLog.active = None
+
+
+def make_file(adapter: HDF5StorageAdapter, tmp_path: Path, shape: tuple[int, ...]) -> Path:
+    """Create an array file of the given shape without data.
+
+    :param adapter: storage adapter
+    :param tmp_path: directory for the file
+    :param shape: array shape
+    :returns: path to the file
+    """
+    path = tmp_path / "array.hdf5"
+    adapter.create(path, shape, {"id": "test"})
+    return path
+
+
+def preload(path: Path, values: np.ndarray) -> None:
+    """Put a ``data`` dataset into the file directly, with a counter matching its content.
+
+    :param path: path to the file
+    :param values: full-size array of values; ``NaN`` cells count as empty
+    """
+    with h5py.File(path, "r+", locking=False) as f:
+        f.create_dataset("data", data=values, fillvalue=FILL)
+        f["empty_cells"][()] = int(np.count_nonzero(np.isnan(values)))
+
+
+def stored(path: Path) -> np.ndarray:
+    """Read the whole ``data`` dataset.
+
+    :param path: path to the file
+    :returns: stored values
+    """
+    with h5py.File(path, "r", locking=False) as f:
+        return f["data"][()]
+
+
+def region_data(shape: tuple[int, ...], bounds: Any) -> np.ndarray:
+    """Build distinct real values for the region selected by ``bounds``.
+
+    :param shape: array shape
+    :param bounds: index expression
+    :returns: array of the region shape with values ``1..n``
+    """
+    region_shape = create_shape_from_slice(shape, bounds)
+    size = int(np.prod(region_shape, dtype=int))
+    return np.arange(1, size + 1, dtype=DTYPE).reshape(region_shape)
+
+
+def real_values_everywhere(shape: tuple[int, ...]) -> np.ndarray:
+    """Build a full-size array without a single fill value.
+
+    :param shape: array shape
+    :returns: array with values ``1..n``
+    """
+    size = int(np.prod(shape, dtype=int))
+    return np.arange(1, size + 1, dtype=DTYPE).reshape(shape)
+
+
+def every_other_cell_filled(values: np.ndarray) -> np.ndarray:
+    """Copy of ``values`` with every other cell replaced by the fill value; the first cell always keeps its value.
+
+    :param values: source array
+    :returns: the copy
+    """
+    mixed = values.copy()
+    mixed.reshape(-1)[1::2] = FILL
+    return mixed
+
+
+# Index expressions that select every cell of the array: the region is the whole file
+FULL_OVERWRITE_CASES = [
+    pytest.param((100,), np.index_exp[:], id="1d-colon"),
+    pytest.param((100,), np.index_exp[...], id="1d-ellipsis"),
+    pytest.param((100,), np.index_exp[0:100], id="1d-explicit"),
+    pytest.param((100,), np.index_exp[-100:], id="1d-negative-start"),
+    pytest.param((100,), np.index_exp[::1], id="1d-step-one"),
+    pytest.param((10, 10), np.index_exp[:], id="2d-colon"),
+    pytest.param((10, 10), np.index_exp[:, :], id="2d-colon-colon"),
+    pytest.param((10, 10), np.index_exp[..., :], id="2d-ellipsis-colon"),
+    pytest.param((10, 10), np.index_exp[0:10, 0:10], id="2d-explicit"),
+    pytest.param((4, 5, 5), np.index_exp[:], id="3d-colon"),
+    pytest.param((4, 5, 5), np.index_exp[0:4, ...], id="3d-explicit-ellipsis"),
+    pytest.param((1, 100), np.index_exp[0], id="2d-single-row-int"),
+    pytest.param((1, 100), np.index_exp[0, :], id="2d-single-row-int-colon"),
+    pytest.param((1, 100), np.index_exp[-1], id="2d-single-row-negative-int"),
+    pytest.param((1, 1, 100), np.index_exp[0, 0], id="3d-two-ints"),
+    pytest.param((1,), np.index_exp[0], id="single-cell-int"),
+    pytest.param((1,), np.index_exp[:], id="single-cell-colon"),
+]
+
+# Index expressions that leave at least one cell untouched: the region must be read before the write.
+# A stride over the whole axis selects every other cell, so it is not a full overwrite either.
+PARTIAL_WRITE_CASES = [
+    pytest.param((100,), np.index_exp[0:50], 50, id="1d-half"),
+    pytest.param((100,), np.index_exp[::2], 50, id="1d-stride-over-the-whole-axis"),
+    pytest.param((100,), np.index_exp[1::3], 33, id="1d-stride-with-offset"),
+    pytest.param((100,), np.index_exp[0:50:2], 25, id="1d-stride-in-a-half"),
+    pytest.param((100,), np.index_exp[0:99], 99, id="1d-all-but-last"),
+    pytest.param((100,), np.index_exp[1:], 99, id="1d-all-but-first"),
+    pytest.param((100,), np.index_exp[-1], 1, id="1d-last-cell-int"),
+    pytest.param((100,), np.index_exp[7], 1, id="1d-one-cell-int"),
+    pytest.param((10, 10), np.index_exp[0], 10, id="2d-first-row-int"),
+    pytest.param((10, 10), np.index_exp[:, 0:5], 50, id="2d-half-columns"),
+    pytest.param((10, 10), np.index_exp[::2, :], 50, id="2d-stride-rows"),
+    pytest.param((10, 10), np.index_exp[::2, ::2], 25, id="2d-stride-both-axes"),
+    pytest.param((4, 5, 5), np.index_exp[:, ::2, :], 60, id="3d-stride-middle-axis"),
+    pytest.param((10, 10), np.index_exp[0:9, :], 90, id="2d-all-but-last-row"),
+    pytest.param((4, 5, 5), np.index_exp[1:3], 50, id="3d-middle-slab"),
+    pytest.param((4, 5, 5), np.index_exp[:, :, 0], 20, id="3d-first-column"),
+    pytest.param((1, 100), np.index_exp[0, 0:50], 50, id="2d-single-row-half"),
+    pytest.param((2, 100), np.index_exp[0], 100, id="2d-one-of-two-rows"),
+]
+
+
+class TestFullOverwrite:
+    """A write that covers every cell of the file replaces its content: the old content is not read for the counter."""
+
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_data_replaces_the_content_without_reading_it(self, adapter, tmp_path, access, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        preload(path, every_other_cell_filled(real_values_everywhere(shape)))
+        data = region_data(shape, bounds)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads, writes = access.data_reads, access.data_writes
+
+        assert empty_cells(path) == 0
+        assert np.array_equal(stored(path).reshape(-1), data.reshape(-1))
+        assert reads == 0
+        assert writes == 1
+
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_data_into_an_empty_array_creates_the_dataset_without_reading(
+        self, adapter, tmp_path, access, shape, bounds
+    ):
+        path = make_file(adapter, tmp_path, shape)
+        data = region_data(shape, bounds)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads, writes = access.data_reads, access.data_writes
+
+        assert empty_cells(path) == 0
+        assert np.array_equal(stored(path).reshape(-1), data.reshape(-1))
+        assert reads == 0
+        assert writes == 1
+
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_fill_values_delete_the_dataset_without_reading_or_writing_it(
+        self, adapter, tmp_path, access, shape, bounds
+    ):
+        path = make_file(adapter, tmp_path, shape)
+        preload(path, real_values_everywhere(shape))
+        data = np.full(create_shape_from_slice(shape, bounds), FILL, dtype=DTYPE)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads, writes = access.data_reads, access.data_writes
+
+        assert not has_data(path)
+        assert empty_cells(path) == int(np.prod(shape, dtype=int))
+        assert reads == 0
+        assert writes == 0
+
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_fill_values_into_an_empty_array_create_nothing(self, adapter, tmp_path, access, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        data = np.full(create_shape_from_slice(shape, bounds), FILL, dtype=DTYPE)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads, writes = access.data_reads, access.data_writes
+
+        assert not has_data(path)
+        assert empty_cells(path) == int(np.prod(shape, dtype=int))
+        assert reads == 0
+        assert writes == 0
+
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_mixed_data_counts_the_fill_values_of_the_new_data_only(self, adapter, tmp_path, access, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        preload(path, real_values_everywhere(shape))
+        data = every_other_cell_filled(region_data(shape, bounds))
+        expected_empty = int(np.count_nonzero(np.isnan(data)))
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads, writes = access.data_reads, access.data_writes
+
+        assert empty_cells(path) == expected_empty
+        assert real_values(path) == int(np.prod(shape, dtype=int)) - expected_empty
+        assert reads == 0
+        assert writes == 1
+
+    @pytest.mark.parametrize("drift", [0, 3, 100_000], ids=["counter-zero", "counter-too-small", "counter-too-big"])
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_drifted_counter_is_replaced_by_the_count_of_the_new_data(
+        self, adapter, tmp_path, access, shape, bounds, drift
+    ):
+        path = make_file(adapter, tmp_path, shape)
+        preload(path, real_values_everywhere(shape))
+        TestDriftedCounter.set_counter(path, drift)
+        data = every_other_cell_filled(region_data(shape, bounds))
+        expected_empty = int(np.count_nonzero(np.isnan(data)))
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads = access.data_reads
+
+        assert empty_cells(path) == expected_empty
+        assert reads == 0
+
+    @pytest.mark.parametrize("drift", [0, 3, 100_000], ids=["counter-zero", "counter-too-small", "counter-too-big"])
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_drifted_counter_does_not_keep_a_dataset_of_fill_values(
+        self, adapter, tmp_path, access, shape, bounds, drift
+    ):
+        path = make_file(adapter, tmp_path, shape)
+        preload(path, real_values_everywhere(shape))
+        TestDriftedCounter.set_counter(path, drift)
+        data = np.full(create_shape_from_slice(shape, bounds), FILL, dtype=DTYPE)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads, writes = access.data_reads, access.data_writes
+
+        assert not has_data(path)
+        assert empty_cells(path) == int(np.prod(shape, dtype=int))
+        assert reads == 0
+        assert writes == 0
+
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_scalar_fills_every_cell(self, adapter, tmp_path, access, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        preload(path, every_other_cell_filled(real_values_everywhere(shape)))
+
+        adapter.update_data(path, bounds, np.float64(5.0), DTYPE, shape, FILL, None)
+        reads = access.data_reads
+
+        assert empty_cells(path) == 0
+        assert np.all(stored(path) == 5.0)
+        assert reads == 0
+
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_scalar_fill_value_deletes_the_dataset(self, adapter, tmp_path, access, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        preload(path, real_values_everywhere(shape))
+
+        adapter.update_data(path, bounds, np.float64(FILL), DTYPE, shape, FILL, None)
+        reads, writes = access.data_reads, access.data_writes
+
+        assert not has_data(path)
+        assert empty_cells(path) == int(np.prod(shape, dtype=int))
+        assert reads == 0
+        assert writes == 0
+
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_non_nan_fill_value(self, adapter, tmp_path, access, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        total = int(np.prod(shape, dtype=int))
+        data = region_data(shape, bounds)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, 0.0, None)
+        assert empty_cells(path) == 0
+        assert access.data_reads == 0
+
+        adapter.update_data(path, bounds, np.zeros_like(data), DTYPE, shape, 0.0, None)
+        assert not has_data(path)
+        assert empty_cells(path) == total
+        assert access.data_reads == 0
+
+
+class TestPartialWrite:
+    """A write that leaves cells untouched counts by the difference in its region, so the region is read once."""
+
+    @pytest.mark.parametrize(("shape", "bounds", "count"), PARTIAL_WRITE_CASES)
+    def test_fill_values_over_data_free_exactly_the_region(self, adapter, tmp_path, access, shape, bounds, count):
+        path = make_file(adapter, tmp_path, shape)
+        preload(path, real_values_everywhere(shape))
+        data = np.full(create_shape_from_slice(shape, bounds), FILL, dtype=DTYPE)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads = access.data_reads
+
+        assert has_data(path)
+        assert empty_cells(path) == count
+        assert real_values(path) == int(np.prod(shape, dtype=int)) - count
+        assert reads == 1
+
+    @pytest.mark.parametrize(("shape", "bounds", "count"), PARTIAL_WRITE_CASES)
+    def test_repeated_fill_values_do_not_count_twice(self, adapter, tmp_path, access, shape, bounds, count):
+        path = make_file(adapter, tmp_path, shape)
+        preload(path, real_values_everywhere(shape))
+        data = np.full(create_shape_from_slice(shape, bounds), FILL, dtype=DTYPE)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads = access.data_reads
+
+        assert has_data(path)
+        assert empty_cells(path) == count
+        assert reads == 2
+
+    @pytest.mark.parametrize(("shape", "bounds", "count"), PARTIAL_WRITE_CASES)
+    def test_data_over_fill_values_takes_exactly_the_region(self, adapter, tmp_path, access, shape, bounds, count):
+        path = make_file(adapter, tmp_path, shape)
+        total = int(np.prod(shape, dtype=int))
+        preload(path, np.full(shape, FILL, dtype=DTYPE))
+        data = region_data(shape, bounds)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads = access.data_reads
+
+        assert empty_cells(path) == total - count
+        assert real_values(path) == count
+        assert reads == 1
+
+    @pytest.mark.parametrize(("shape", "bounds", "count"), PARTIAL_WRITE_CASES)
+    def test_data_into_an_empty_array_does_not_read(self, adapter, tmp_path, access, shape, bounds, count):
+        path = make_file(adapter, tmp_path, shape)
+        total = int(np.prod(shape, dtype=int))
+        data = region_data(shape, bounds)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads = access.data_reads
+
+        assert empty_cells(path) == total - count
+        assert real_values(path) == count
+        assert reads == 0
+
+    @pytest.mark.parametrize(("shape", "bounds", "count"), PARTIAL_WRITE_CASES)
+    def test_fill_values_into_an_empty_array_create_nothing(self, adapter, tmp_path, access, shape, bounds, count):
+        path = make_file(adapter, tmp_path, shape)
+        data = np.full(create_shape_from_slice(shape, bounds), FILL, dtype=DTYPE)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads, writes = access.data_reads, access.data_writes
+
+        assert not has_data(path)
+        assert empty_cells(path) == int(np.prod(shape, dtype=int))
+        assert reads == 0
+        assert writes == 0
+
+    @pytest.mark.parametrize(("shape", "bounds", "count"), PARTIAL_WRITE_CASES)
+    def test_last_real_cells_cleared_by_a_partial_write_delete_the_dataset(
+        self, adapter, tmp_path, access, shape, bounds, count
+    ):
+        """Only the region holds data; writing fill values into it empties the file, which is verified by a scan."""
+        path = make_file(adapter, tmp_path, shape)
+        values = np.full(shape, FILL, dtype=DTYPE)
+        values[bounds] = region_data(shape, bounds)
+        preload(path, values)
+        data = np.full(create_shape_from_slice(shape, bounds), FILL, dtype=DTYPE)
+
+        adapter.update_data(path, bounds, data, DTYPE, shape, FILL, None)
+        reads = access.data_reads
+
+        assert not has_data(path)
+        assert empty_cells(path) == int(np.prod(shape, dtype=int))
+        assert reads == 2  # the region before the write and the scan before the deletion
+
+
+class TestClearWholeArray:
+    """Clearing every cell of the file deletes the dataset: the content is not read."""
+
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_whole_array_is_deleted_without_reading(self, adapter, tmp_path, access, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        preload(path, every_other_cell_filled(real_values_everywhere(shape)))
+
+        adapter.clear_data(path, shape, bounds, FILL)
+        reads, writes = access.data_reads, access.data_writes
+
+        assert not has_data(path)
+        assert empty_cells(path) == int(np.prod(shape, dtype=int))
+        assert reads == 0
+        assert writes == 0
+
+    @pytest.mark.parametrize(("shape", "bounds"), FULL_OVERWRITE_CASES)
+    def test_whole_empty_array_is_a_no_op(self, adapter, tmp_path, access, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+
+        adapter.clear_data(path, shape, bounds, FILL)
+        reads, writes = access.data_reads, access.data_writes
+
+        assert not has_data(path)
+        assert empty_cells(path) == int(np.prod(shape, dtype=int))
+        assert reads == 0
+        assert writes == 0
+
+    @pytest.mark.parametrize(("shape", "bounds", "count"), PARTIAL_WRITE_CASES)
+    def test_partial_clear_reads_the_region_and_keeps_the_rest(self, adapter, tmp_path, access, shape, bounds, count):
+        path = make_file(adapter, tmp_path, shape)
+        preload(path, real_values_everywhere(shape))
+
+        adapter.clear_data(path, shape, bounds, FILL)
+        reads, writes = access.data_reads, access.data_writes
+
+        assert has_data(path)
+        assert empty_cells(path) == count
+        assert real_values(path) == int(np.prod(shape, dtype=int)) - count
+        assert reads == 1
+        assert writes == 1
+
+
+if __name__ == "__main__":
+    pytest.main()

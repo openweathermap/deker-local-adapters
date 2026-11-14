@@ -71,6 +71,7 @@ default-groups = ["dev", "docs"]
 
 [tool.uv.sources]
 deker = { path = "../deker", editable = true }
+deker-tools = { path = "../deker-tools", editable = true }
 
                                 ####################
                                 ### DEPENDENCIES ###

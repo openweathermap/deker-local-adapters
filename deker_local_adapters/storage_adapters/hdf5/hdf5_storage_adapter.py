@@ -61,6 +61,19 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         return int(np.count_nonzero(array == fill_value))
 
     @staticmethod
+    def _covers_whole_array(array_shape: tuple[int, ...], subset_shape: tuple[int, ...]) -> bool:
+        """Check that a region selects every cell of the array.
+
+        The shapes are compared by the number of cells, not by the dimensions: an integer index drops a
+        dimension of size 1 and still selects every cell, while a stride over a whole axis does not.
+
+        :param array_shape: shape of the array
+        :param subset_shape: shape of the region selected by the index expression
+        :returns: ``True`` if the region is the whole array
+        """
+        return calculate_total_cells_in_array(subset_shape) == calculate_total_cells_in_array(array_shape)
+
+    @staticmethod
     def _create_meta_dataset(f: h5py.File, meta: str | bytes) -> Dataset:
         """Store ``meta`` as a scalar fixed-length bytes dataset sized exactly to its UTF-8 payload.
 
@@ -198,11 +211,19 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 subset_shape = create_shape_from_slice(shape, bounds)
                 subset_cells = calculate_total_cells_in_array(subset_shape)
                 ds: Dataset | None = f.get("data")
-
-                # the counter moves by the difference between the empty cells in the region before and after the write
-                fill_values_before = subset_cells if ds is None else self._count_fill_values(ds[bounds], fill_value)
                 fill_values_after = self._count_fill_values(np.broadcast_to(np.asarray(data), subset_shape), fill_value)
-                empty_cells = int(empty_cells_ds[()]) - fill_values_before + fill_values_after
+
+                if self._covers_whole_array(shape, subset_shape):
+                    # every cell is replaced: the old content and the old counter play no part in the result
+                    empty_cells = fill_values_after
+                    if empty_cells >= total_cells and ds is not None:
+                        # nothing but fill values is written: the dataset goes away without being written or scanned
+                        del f["data"]
+                        ds = None
+                else:
+                    # the counter moves by the difference between the empty cells in the region before and after
+                    fill_values_before = subset_cells if ds is None else self._count_fill_values(ds[bounds], fill_value)
+                    empty_cells = int(empty_cells_ds[()]) - fill_values_before + fill_values_after
 
                 if ds is None:
                     if empty_cells >= total_cells:
@@ -286,7 +307,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                     total_cells = calculate_total_cells_in_array(array_shape)
                     subset_shape = create_shape_from_slice(array_shape, bounds)
 
-                    if ds.shape == subset_shape:
+                    if self._covers_whole_array(array_shape, subset_shape):
                         # the whole array is cleared
                         del f["data"]
                         empty_cells = total_cells
