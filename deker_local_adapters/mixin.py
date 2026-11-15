@@ -23,7 +23,9 @@ from typing import TYPE_CHECKING, Optional, cast
 
 from deker.ABC.base_adapters import IArrayAdapter
 from deker.arrays import Array, VArray
-from deker.errors import DekerArrayError, DekerValidationError
+from deker.errors import DekerArrayError, DekerLockError, DekerValidationError
+from deker.flock import Flock
+from deker.locks import wait_for_unlock
 from deker.log import SelfLoggerMixin
 from deker.tools import get_main_path, get_paths, get_symlink_path
 from deker.tools.decorators import check_ctx_state
@@ -50,6 +52,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
     data_dir: str
     symlinks_dir: str
     dirs: tuple[str, str]
+    SYMLINK_DIRECTORY_LOCK_INTERVAL = 0.05  # creation is short, so the directory is polled often
 
     @abstractmethod
     def read_meta(self, array: ArrayT | Path) -> ArrayMeta:
@@ -130,24 +133,91 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         sym_filename = paths.symlink / file
         return main_filename, sym_filename
 
-    @staticmethod
-    def check_array_file_existence(file: Path) -> None:
-        """Check that (V)Array main file exists.
-
-        :param file: Path to the main file
-        """
-        if file.exists():
-            raise DekerArrayError(f"File {file.resolve()} already exists")
-
     def check_symlink_existence(self, file: Path) -> None:
         """Check that there is no symlink for a given (V)Array.
 
         :param file: Path to symlink
+        :raises DekerValidationError: if a (V)Array with the same primary attributes exists
         """
         if not is_empty(file.parent):
             message = f"File {file.resolve()} already exists"
             self.logger.warning(message)
             raise DekerValidationError(message)
+
+    @staticmethod
+    def _try_lock(flock: Flock) -> bool:
+        """Try to take a flock once.
+
+        :param flock: the flock to take
+        :returns: ``True`` if the flock is held now
+        """
+        try:
+            flock.acquire()
+        except DekerLockError:
+            return False
+        return True
+
+    def _lock_symlink_directory(self, directory: Path) -> Flock:
+        """Take the symlink directory of some primary attributes exclusively.
+
+        One creator of a (V)Array with these primary attributes at a time: the next one waits here and then
+        finds the directory taken. The lock is an flock on the directory itself, so it works across processes
+        and containers on one storage, dies with its holder and leaves no file behind.
+
+        :param directory: symlink directory of the primary attributes
+        :returns: the held flock, to be released by the caller
+        :raises DekerLockError: if the directory is not released within ``write_lock_timeout``
+        """
+        flock = Flock(directory)
+        if not wait_for_unlock(
+            self._try_lock, (flock,), self.ctx.config.write_lock_timeout, self.SYMLINK_DIRECTORY_LOCK_INTERVAL
+        ):
+            raise DekerLockError(f"Directory {directory} is locked for the creation of an array")
+        return flock
+
+    @abstractmethod
+    def _create_main_file(self, array: ArrayT, main_filename: Path) -> None:
+        """Create the main file of a (V)Array in one step.
+
+        :param array: Array or VArray
+        :param main_filename: path to the main file
+        :raises FileExistsError: if the file already exists
+        """
+        pass
+
+    def _create_files(self, array: ArrayT, main_filename: Path, sym_filename: Path) -> None:
+        """Create the main file of a (V)Array and the symlink to it.
+
+        :param array: Array or VArray
+        :param main_filename: path to the main file
+        :param sym_filename: path to the symlink
+        :raises DekerArrayError: if the main file already exists
+        """
+        try:
+            self._create_main_file(array, main_filename)
+        except FileExistsError:
+            raise DekerArrayError(f"File {main_filename.resolve()} already exists")
+        os.symlink(main_filename, sym_filename)
+
+    def _create_on_disk(self, array: ArrayT) -> ArrayT:
+        """Create the files of a (V)Array, holding the symlink directory of its primary attributes meanwhile.
+
+        :param array: Array or VArray
+        :returns: the same instance, once its files are created
+        :raises DekerValidationError: if a (V)Array with the same primary attributes exists
+        :raises DekerArrayError: if the main file already exists
+        """
+        main_filename, sym_filename = self.get_filenames_for_create_methods(array)
+        if not array.primary_attributes:
+            self._create_files(array, main_filename, sym_filename)
+            return array
+        directory_lock = self._lock_symlink_directory(sym_filename.parent)
+        try:
+            self.check_symlink_existence(sym_filename)
+            self._create_files(array, main_filename, sym_filename)
+        finally:
+            directory_lock.release()
+        return array
 
     def _init_array(
         self,

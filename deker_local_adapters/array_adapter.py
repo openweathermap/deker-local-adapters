@@ -87,31 +87,23 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         :param array: Array instance
         :returns: the same instance, once its files are created
         :raises DekerArrayError: if the array file already exists or its VArray does not exist
+        :raises DekerValidationError: if an array with the same primary attributes exists
         """
-        main_filename, sym_filename = self.get_filenames_for_create_methods(array)
-        self.check_array_file_existence(main_filename)
-
         # If the array is part of a varray, check that such varray exists
         if array._vid:
             varray_path = get_main_path(array._vid, Path(self.ctx.config.varray_data_directory))
             if not (self.collection_path / varray_path).exists():
                 raise DekerArrayError(f"VArray with id={array._vid} doesn't exist")
+        return self._create_on_disk(array)
 
-        # Check that there is no array with the given primary attributes.
-        if array.primary_attributes:
-            self.check_symlink_existence(sym_filename)
+    def _create_main_file(self, array: Array, main_filename: Path) -> None:
+        """Create the hdf5 file of an Array with its metadata.
 
-        # Create meta for the array
-        array_meta = array._create_meta()
-        # Create the array (write to disk)
-        self.storage_adapter.create(
-            main_filename,
-            array.shape,
-            array_meta,
-        )
-        # Create symlink
-        os.symlink(main_filename, sym_filename)
-        return array
+        :param array: Array instance
+        :param main_filename: path to the hdf5 file
+        :raises FileExistsError: if the file already exists
+        """
+        self.storage_adapter.create(main_filename, array.shape, array._create_meta())
 
     @check_ctx_state
     @ReadArrayLock()
@@ -138,6 +130,26 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
 
         result = self.storage_adapter.read_meta(filename)
         return result
+
+    @WriteArrayLock()
+    def _delete_held(self, array: Array) -> None:
+        """Delete the array holding its file exclusively.
+
+        :param array: Array instance
+        """
+        super().delete(array)
+
+    @check_ctx_state
+    def delete(self, array: Array) -> None:
+        """Delete the array, waiting for the readers and writers of its file to leave.
+
+        :param array: Array instance
+        :raises DekerLockError: if the file is still held when the write lock timeout is over
+        """
+        if self._get_main_path_to_file(array).exists():
+            self._delete_held(array)
+        else:
+            super().delete(array)  # the main file is gone already: the symlink is removed anyway
 
     @check_ctx_state
     @WriteArrayLock()

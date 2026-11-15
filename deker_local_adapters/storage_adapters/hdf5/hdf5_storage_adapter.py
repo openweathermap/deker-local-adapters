@@ -121,16 +121,19 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
     def create(self, path: Path, array_shape: tuple[int, ...], metadata: str | bytes | dict) -> None:
         """Create new hdf5 file with metadata.
 
+        The file is created in one step: an existing file is refused, never reopened or truncated.
+
         :param path: path to hdf5 file
         :param array_shape: shape of the array
         :param metadata: array metadata
+        :raises FileExistsError: if the file already exists
         """
         try:
             self.logger.debug(f"trying to create {path}")
             # free space released by dataset recreation (``meta`` updates) is tracked across file opens
             # and reused instead of growing the file; readable by HDF5 >= 1.10.1 (any h5py 3.x)
-            with h5py.File(path, "w", locking=False, fs_strategy="fsm", fs_persist=True) as f:
-                self.logger.debug(f"{path} opened in 'w'-mode")
+            with h5py.File(path, "w-", locking=False, fs_strategy="fsm", fs_persist=True) as f:
+                self.logger.debug(f"{path} opened in 'w-'-mode")
                 if not isinstance(metadata, (str, bytes)):
                     metadata = json.dumps(metadata, default=str)
                 self._create_meta_dataset(f, metadata)
@@ -140,6 +143,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
                 empty_cells.flush()
                 f.flush()
             self.logger.debug(f"{path} created and closed")
+        except FileExistsError:
+            self.logger.debug(f"{path} already exists")
+            raise
         except Exception as e:
             self.logger.exception(e)
             raise e

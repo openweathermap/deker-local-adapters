@@ -16,7 +16,6 @@
 
 import json
 import logging
-import os
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -73,19 +72,19 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
         :param array: VArray instance
         :returns: the same instance, once its files are created
         :raises DekerArrayError: if the varray file already exists
+        :raises DekerValidationError: if a varray with the same primary attributes exists
         """
-        main_filename, sym_filename = self.get_filenames_for_create_methods(array)
-        self.check_array_file_existence(main_filename)
+        return self._create_on_disk(array)
 
-        if array.primary_attributes:
-            self.check_symlink_existence(sym_filename)
+    def _create_main_file(self, array: VArray, main_filename: Path) -> None:
+        """Create the json file of a VArray with its metadata.
 
-        os.makedirs(main_filename.parent, exist_ok=True)
-        varray_meta = array._create_meta()
-        with open(main_filename, "w", encoding="utf-8") as f:
-            f.write(varray_meta)
-        os.symlink(main_filename, sym_filename)
-        return array
+        :param array: VArray instance
+        :param main_filename: path to the json file
+        :raises FileExistsError: if the file already exists
+        """
+        with open(main_filename, "x", encoding="utf-8") as f:
+            f.write(array._create_meta())
 
     @check_ctx_state
     def read_meta(self, array: VArray | Path) -> ArrayMeta:
