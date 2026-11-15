@@ -20,7 +20,6 @@ import os
 
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
-from typing import Any
 
 from deker.ABC import BaseStorageAdapter
 from deker.ABC.base_adapters import BaseVArrayAdapter
@@ -28,15 +27,14 @@ from deker.arrays import VArray
 from deker.ctx import CTX
 from deker.errors import DekerArrayError
 from deker.locks import UpdateMetaAttributeLock
-from deker.log import SelfLoggerMixin
 from deker.tools.decorators import check_ctx_state
-from deker.types import ArrayMeta, Numeric, Slice
+from deker.types import ArrayMeta, Data, Numeric, Slice
 from numpy import ndarray
 
 from deker_local_adapters.mixin import LocalAdapterMixin
 
 
-class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
+class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
     """Adapter for virtual arrays."""
 
     def __init__(
@@ -59,7 +57,7 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
         raise NotImplementedError
 
     @check_ctx_state
-    def update(self, array: "VArray", bounds: Slice, data: Any) -> None:
+    def update(self, array: "VArray", bounds: Slice, data: Data) -> None:
         """Not implemented."""
         raise NotImplementedError
 
@@ -69,10 +67,12 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
         raise NotImplementedError
 
     @check_ctx_state
-    def create(self, array: VArray) -> None:
+    def create(self, array: VArray) -> VArray:
         """Create a new virtual array on disk storage.
 
         :param array: VArray instance
+        :returns: the same instance, once its files are created
+        :raises DekerArrayError: if the varray file already exists
         """
         main_filename, sym_filename = self.get_filenames_for_create_methods(array)
         self.check_array_file_existence(main_filename)
@@ -85,18 +85,16 @@ class LocalVArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseVArrayAdapter):
         with open(main_filename, "w", encoding="utf-8") as f:
             f.write(varray_meta)
         os.symlink(main_filename, sym_filename)
+        return array
 
     @check_ctx_state
     def read_meta(self, array: VArray | Path) -> ArrayMeta:
         """Read VArray metadata.
 
-        :param array:  VArray instance
+        :param array: VArray instance or the path to its main file
         :returns: VArray metadata
         """
-        if isinstance(array, VArray):
-            filename = self._get_main_path_to_file(array)
-        else:
-            filename = array
+        filename = array if isinstance(array, Path) else self._get_main_path_to_file(array)
         try:
             with open(filename, encoding="utf-8") as f:
                 data = f.read()

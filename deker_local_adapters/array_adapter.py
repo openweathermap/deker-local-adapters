@@ -19,18 +19,17 @@ import os
 
 from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Optional
 
 from deker.ABC.base_adapters import BaseArrayAdapter
 from deker.arrays import Array
 from deker.ctx import CTX
 from deker.errors import DekerArrayError
 from deker.locks import ReadArrayLock, WriteArrayLock
-from deker.log import SelfLoggerMixin
 from deker.schemas import AttributeSchema
 from deker.tools import get_main_path, get_symlink_path
 from deker.tools.decorators import check_ctx_state
-from deker.types import ArrayMeta, Numeric, Slice
+from deker.types import ArrayMeta, Data, Numeric, Slice
 from numpy import ndarray
 
 from deker_local_adapters.mixin import LocalAdapterMixin
@@ -43,7 +42,7 @@ if TYPE_CHECKING:
     from deker.collection import Collection
 
 
-class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
+class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
     """Default adapter for managing Array instances."""
 
     def __init__(
@@ -82,10 +81,12 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
             return None
 
     @check_ctx_state
-    def create(self, array: Array) -> None:
+    def create(self, array: Array) -> Array:
         """Create a new array on disk storage.
 
         :param array: Array instance
+        :returns: the same instance, once its files are created
+        :raises DekerArrayError: if the array file already exists or its VArray does not exist
         """
         main_filename, sym_filename = self.get_filenames_for_create_methods(array)
         self.check_array_file_existence(main_filename)
@@ -110,6 +111,7 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
         )
         # Create symlink
         os.symlink(main_filename, sym_filename)
+        return array
 
     @check_ctx_state
     @ReadArrayLock()
@@ -129,20 +131,17 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
     def read_meta(self, array: Array | Path) -> ArrayMeta:
         """Read array metadata.
 
-        :param array: Array instance
+        :param array: Array instance or the path to its main file
         :returns: array metadata
         """
-        if isinstance(array, Array):
-            filename = self._get_main_path_to_file(array)
-        else:
-            filename = array
+        filename = array if isinstance(array, Path) else self._get_main_path_to_file(array)
 
         result = self.storage_adapter.read_meta(filename)
         return result
 
     @check_ctx_state
     @WriteArrayLock()
-    def update(self, array: Array, bounds: Slice, data: Any) -> None:
+    def update(self, array: Array, bounds: Slice, data: Data) -> None:
         """Update data in the existing array.
 
         :param array: Array instance

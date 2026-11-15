@@ -50,7 +50,7 @@ def flip_axes(data: ndarray | Numeric, axes: tuple[int, ...]) -> ndarray | Numer
     return np.flip(data, axes)
 
 
-class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
+class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
     """Local HDF5 storage adapter.
 
     Wraps `h5py` files managing logic.
@@ -151,7 +151,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         bounds: Slice,
         fill_value: Numeric,
         dtype: type[Numeric],
-    ) -> ndarray:
+    ) -> ndarray | Numeric:
         """Read array data from hdf5 file.
 
         :param path: path to hdf5 file
@@ -159,7 +159,8 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         :param bounds: array slice
         :param fill_value: Value to fill empty array
         :param dtype: array dtype
-        :returns: data within the bounds, filled with ``fill_value`` where the array is empty
+        :returns: data within the bounds, filled with ``fill_value`` where the array is empty;
+            a scalar when the bounds select a single cell
         """
         self.logger.debug(f"trying to read data from {path}")
         with h5py.File(path, mode="r", locking=False) as f:
@@ -199,9 +200,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
         self,
         path: Path,
         bounds: Slice,
-        data: ndarray,
+        data: ndarray | Numeric,
         dtype: type[Numeric],
-        shape: tuple,
+        shape: tuple[int, ...],
         fill_value: Numeric,
         collection_options: HDF5Options | None,
     ) -> None:

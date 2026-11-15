@@ -16,17 +16,19 @@
 
 import os
 
-from collections.abc import Callable, Generator
-from concurrent.futures import ThreadPoolExecutor
-from logging import Logger
+from abc import abstractmethod
+from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Optional, cast
 
+from deker.ABC.base_adapters import IArrayAdapter
 from deker.arrays import Array, VArray
 from deker.errors import DekerArrayError, DekerValidationError
+from deker.log import SelfLoggerMixin
 from deker.tools import get_main_path, get_paths, get_symlink_path
 from deker.tools.decorators import check_ctx_state
 from deker.types import ArrayMeta
+from deker.types.private.typings import ArrayT
 from deker_tools.path import is_empty
 
 from deker_local_adapters.errors import DekerBrokenSymlinkError
@@ -37,21 +39,26 @@ if TYPE_CHECKING:
     from deker.collection import Collection
 
 
-class LocalAdapterMixin:
-    """Mixin for local adapters.
+class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
+    """Common part of the local Array and VArray adapters: files, symlinks and lookups on the local disk.
 
-    This particular mixin depends on IArray interface.
-    Keep in mind that changes in IArray may require making changes here.
+    ``ArrayT`` is the kind of arrays the adapter manages. The attributes below are set by the adapters
+    in their ``__init__``.
     """
 
     file_ext: str
     data_dir: str
     symlinks_dir: str
-    collection_path: Path
-    dirs: tuple
-    logger: Logger
-    executor: ThreadPoolExecutor
-    read_meta: Callable[[Path], ArrayMeta]  # provided by the adapter
+    dirs: tuple[str, str]
+
+    @abstractmethod
+    def read_meta(self, array: ArrayT | Path) -> ArrayMeta:
+        """Read the metadata of an array by its instance or by the path to its file.
+
+        :param array: Array or VArray instance, or the path to its main file
+        :returns: array metadata
+        """
+        pass
 
     def _delete(self, symlink: Path) -> None:
         """Delete symlink and realpath files from disk.
@@ -78,7 +85,7 @@ class LocalAdapterMixin:
             pass
 
     @check_ctx_state
-    def delete(self, array: Array | VArray) -> None:
+    def delete(self, array: ArrayT) -> None:
         """Delete the existing array.
 
         :param array: array instance
@@ -92,7 +99,7 @@ class LocalAdapterMixin:
             self.logger.exception(e)
             raise e
 
-    def is_deleted(self, array: Array | VArray) -> bool:
+    def is_deleted(self, array: ArrayT) -> bool:
         """Check if the array was deleted.
 
         :param array: Array to check
@@ -103,12 +110,12 @@ class LocalAdapterMixin:
         return not os.path.exists(path)
 
     @check_ctx_state
-    def _get_main_path_to_file(self, array: Array | VArray) -> Path:
+    def _get_main_path_to_file(self, array: ArrayT) -> Path:
         paths = get_paths(array, self.collection_path)
         file = array.id + self.file_ext
         return paths.main / file
 
-    def get_filenames_for_create_methods(self, array: Array | VArray) -> tuple[Path, Path]:
+    def get_filenames_for_create_methods(self, array: ArrayT) -> tuple[Path, Path]:
         """Return paths to the main file and symlink.
 
         !!! DO NOT USE THIS METHOD ANYWHERE EXCEPT adapter.create !!!!
@@ -147,23 +154,25 @@ class LocalAdapterMixin:
         path: Path,
         collection: "Collection",
         array_adapter: "BaseArrayAdapter",
-        varray_adapter: "BaseVArrayAdapter",
-    ) -> Array | VArray:
+        varray_adapter: Optional["BaseVArrayAdapter"],
+    ) -> ArrayT:
         """Read meta and make an array/varray object from it.
 
         :param path: Path to meta
         :param collection: Collection instance
         :param array_adapter: Arrays' adapter
-        :param varray_adapter: VArrays' adapter
+        :param varray_adapter: VArrays' adapter, passed by VArrays' adapters only
         :returns: Array or VArray built from the meta
         """
         meta = self.read_meta(path)
 
+        # a VArrays' adapter gets the VArrays' adapter, an Arrays' adapter does not: the kind matches ``ArrayT``
+        array: Array | VArray
         if varray_adapter:
             array = VArray._create_from_meta(collection, meta, array_adapter, varray_adapter)
         else:
             array = Array._create_from_meta(collection, meta, array_adapter, varray_adapter)
-        return array
+        return cast("ArrayT", array)
 
     def get_by_primary_attributes(
         self,
@@ -171,8 +180,8 @@ class LocalAdapterMixin:
         schema: "BaseArraysSchema",
         collection: "Collection",
         array_adapter: "BaseArrayAdapter",
-        varray_adapter: "BaseVArrayAdapter",
-    ) -> Array | VArray | None:
+        varray_adapter: Optional["BaseVArrayAdapter"],
+    ) -> ArrayT | None:
         """Find (V)Array by given primary attributes.
 
         :param primary_attributes: Key attributes
@@ -183,7 +192,7 @@ class LocalAdapterMixin:
         :returns: matching Array or VArray, or ``None`` if nothing was found
         """
         symlinks_path = get_symlink_path(
-            path_to_symlink_dir=collection.path / self.symlinks_dir,
+            path_to_symlink_dir=self.collection_path / self.symlinks_dir,
             primary_attributes_schema=schema.primary_attributes,
             primary_attributes=primary_attributes,
         )
@@ -208,8 +217,8 @@ class LocalAdapterMixin:
         id_: str,
         collection: "Collection",
         array_adapter: "BaseArrayAdapter",
-        varray_adapter: "BaseVArrayAdapter",
-    ) -> Array | VArray | None:
+        varray_adapter: Optional["BaseVArrayAdapter"],
+    ) -> ArrayT | None:
         """Find (V)Array by id.
 
         :param id_: Array id
@@ -220,7 +229,7 @@ class LocalAdapterMixin:
         """
         filename = id_ + self.file_ext
 
-        data_path = collection.path / self.data_dir
+        data_path = self.collection_path / self.data_dir
         path = get_main_path(id_, data_path)
         file = path / filename
         if file.exists():

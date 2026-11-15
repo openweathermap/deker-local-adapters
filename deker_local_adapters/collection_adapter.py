@@ -34,7 +34,7 @@ if TYPE_CHECKING:
     from deker.collection import Collection
 
 
-class LocalCollectionAdapter(BaseCollectionAdapter):
+class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
     """Adapter which stores info in the file system."""
 
     def __init__(self, ctx: CTX) -> None:
@@ -103,8 +103,8 @@ class LocalCollectionAdapter(BaseCollectionAdapter):
         :param collection: Collection to delete
         """
         try:
-            shutil.rmtree(collection.path, onerror=FileNotFoundError)
-            Path.unlink(collection.path.parent / (collection.name + ".lock"), missing_ok=True)
+            shutil.rmtree(self.collections_resource / collection.name, onerror=FileNotFoundError)
+            Path.unlink(self.collections_resource / (collection.name + ".lock"), missing_ok=True)
         except Exception as e:
             logging.exception(e)
             raise e
@@ -117,7 +117,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter):
         :param collection: Collection to be cleared
         """
         try:
-            for root, dirs, files in os.walk(collection.path):
+            for root, dirs, files in os.walk(self.collections_resource / collection.name):
                 for f in files:
                     save = False
                     if f == collection.name + self.file_ext:
@@ -143,7 +143,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter):
         :returns: ``True`` if the collection directory no longer exists
         """
         # If it does not exist, then it's not created or deleted
-        return not collection.path.exists()
+        return not (self.collections_resource / collection.name).exists()
 
     @check_ctx_state
     def __iter__(self) -> Generator[dict, None, None]:
