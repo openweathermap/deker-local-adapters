@@ -121,53 +121,51 @@ class TestOptions:
         with pytest.raises(DekerValidationError):
             assert HDF5CompressionOpts(compression=compression, compression_opts=comp_opts)
 
-    def test_array_is_compressed(self, client, root_path):
+    def test_array_is_compressed(self, root_path):
+        """Tests if a compressed collection stores smaller files, in the client that created it and in a new one.
+
+        The test opens its own clients: closing the shared client fixture would break the neighbouring tests.
+        """
         dims = [DimensionSchema(name="x", size=1024), DimensionSchema(name="y", size=1024)]
         options = HDF5Options(
             chunks=None,
             compression_opts=HDF5CompressionOpts(compression="gzip", compression_opts=9),
         )
-
         schema = ArraySchema(dtype=float, dimensions=dims)
-        collection = client.create_collection("simple", schema=schema)
-        compressed = client.create_collection("compressed", schema=schema, collection_options=options)
-        collection_path = collection.path
-        compressed_path = compressed.path
         data = np.random.random((1024, 1024))
 
-        array = collection.create()
-        array_id = array.id
-        array_path = collection_path / "array_symlinks" / (array_id + ".hdf5")
-        array[:].update(data)
+        with Client(str(embedded_uri(root_path))) as first_client:
+            collection = first_client.create_collection("simple", schema=schema)
+            compressed = first_client.create_collection("compressed", schema=schema, collection_options=options)
+            collection_path = collection.path
+            compressed_path = compressed.path
 
-        array_c = compressed.create()
-        array_c_id = array_c.id
-        array_c_path = compressed_path / "array_symlinks" / (array_c_id + ".hdf5")
-        array_c[:].update(data)
+            array = collection.create()
+            array_path = collection_path / "array_symlinks" / (array.id + ".hdf5")
+            array[:].update(data)
 
-        assert os.path.getsize(array_path) > os.path.getsize(array_c_path)
+            array_c = compressed.create()
+            array_c_path = compressed_path / "array_symlinks" / (array_c.id + ".hdf5")
+            array_c[:].update(data)
 
-        client.close()
-        del collection
-        del compressed
+            assert os.path.getsize(array_path) > os.path.getsize(array_c_path)
 
         with Client(str(embedded_uri(root_path))) as new_client:
             collection = new_client.get_collection("simple")
             compressed = new_client.get_collection("compressed")
+            try:
+                array = collection.create()
+                array_path = collection_path / "array_symlinks" / (array.id + ".hdf5")
+                array[:].update(data)
 
-            array = collection.create()
-            array_id = array.id
-            array_path = collection_path / "array_symlinks" / (array_id + ".hdf5")
-            array[:].update(data)
+                array_c = compressed.create()
+                array_c_path = compressed_path / "array_symlinks" / (array_c.id + ".hdf5")
+                array_c[:].update(data)
 
-            array_c = compressed.create()
-            array_c_id = array_c.id
-            array_c_path = compressed_path / "array_symlinks" / (array_c_id + ".hdf5")
-            array_c[:].update(data)
-            simple_size = os.path.getsize(array_path)
-            compressed_size = os.path.getsize(array_c_path)
-
-            assert simple_size > compressed_size
+                assert os.path.getsize(array_path) > os.path.getsize(array_c_path)
+            finally:
+                collection.delete()
+                compressed.delete()
 
     @pytest.mark.xfail(reason="Compression filter is unavailable")
     @pytest.mark.parametrize(

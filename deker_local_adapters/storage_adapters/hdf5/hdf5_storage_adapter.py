@@ -28,7 +28,7 @@ from deker.errors import DekerArrayError
 from deker.log import SelfLoggerMixin
 from deker.tools import calculate_total_cells_in_array
 from deker.types import ArrayMeta, Numeric, Slice
-from deker_tools.slices import create_shape_from_slice
+from deker_tools.slices import create_shape_from_slice, positive_bounds
 from h5py import Dataset
 from numpy import ndarray
 
@@ -36,6 +36,18 @@ from deker_local_adapters.storage_adapters.hdf5.hdf5_options import HDF5Options
 
 os.environ["HDF5_PLUGIN_PATH"] = hdf5plugin.PLUGIN_PATH
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
+
+
+def flip_axes(data: ndarray | Numeric, axes: tuple[int, ...]) -> ndarray | Numeric:
+    """Flip the data along the axes, if there are any; a scalar is returned as is.
+
+    :param data: data to flip
+    :param axes: axes to flip along
+    :returns: flipped view of the data, or the data itself
+    """
+    if not axes or np.ndim(data) == 0:
+        return data
+    return np.flip(data, axes)
 
 
 class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
@@ -160,7 +172,8 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 if data.ndim == 0:
                     data = data[()]  # an integer index yields a scalar, as it does for a stored dataset
             else:
-                data = ds[bounds]
+                forward, flipped = positive_bounds(array_shape, bounds)
+                data = flip_axes(ds[forward], flipped)
         self.logger.debug(f"{path} data read OK and closed")
         return data
 
@@ -212,6 +225,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                 subset_cells = calculate_total_cells_in_array(subset_shape)
                 ds: Dataset | None = f.get("data")
                 fill_values_after = self._count_fill_values(np.broadcast_to(np.asarray(data), subset_shape), fill_value)
+                # HDF5 selects forwards only: a negative step becomes its forward twin and the data is flipped to match
+                forward, flipped = positive_bounds(shape, bounds)
+                data = flip_axes(data, flipped)
 
                 if self._covers_whole_array(shape, subset_shape):
                     # every cell is replaced: the old content and the old counter play no part in the result
@@ -222,7 +238,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                         ds = None
                 else:
                     # the counter moves by the difference between the empty cells in the region before and after
-                    fill_values_before = subset_cells if ds is None else self._count_fill_values(ds[bounds], fill_value)
+                    fill_values_before = (
+                        subset_cells if ds is None else self._count_fill_values(ds[forward], fill_value)
+                    )
                     empty_cells = int(empty_cells_ds[()]) - fill_values_before + fill_values_after
 
                 if ds is None:
@@ -246,10 +264,10 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                             )
 
                         ds = f.create_dataset("data", **ds_kwargs)
-                        ds[bounds] = data
+                        ds[forward] = data
                         ds.flush()
                 else:
-                    ds[bounds] = data
+                    ds[forward] = data
                     ds.flush()
                     if empty_cells >= total_cells:
                         empty_cells = self._delete_data_if_empty(f, ds, fill_value, total_cells)
@@ -314,9 +332,10 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter):
                     else:
                         # only the cells that held data become empty; the ones already empty do not count twice
                         subset_cells = calculate_total_cells_in_array(subset_shape)
-                        fill_values_before = self._count_fill_values(ds[bounds], fill_value)
+                        forward, _ = positive_bounds(array_shape, bounds)  # the fill value needs no flipping
+                        fill_values_before = self._count_fill_values(ds[forward], fill_value)
                         empty_cells = int(empty_cells_ds[()]) + subset_cells - fill_values_before
-                        ds[bounds] = fill_value
+                        ds[forward] = fill_value
                         ds.flush()
                         if empty_cells >= total_cells:
                             empty_cells = self._delete_data_if_empty(f, ds, fill_value, total_cells)

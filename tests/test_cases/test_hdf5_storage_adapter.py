@@ -497,6 +497,9 @@ FULL_OVERWRITE_CASES = [
     pytest.param((1, 1, 100), np.index_exp[0, 0], id="3d-two-ints"),
     pytest.param((1,), np.index_exp[0], id="single-cell-int"),
     pytest.param((1,), np.index_exp[:], id="single-cell-colon"),
+    pytest.param((3, 4, 5, 6), np.index_exp[:], id="4d-colon"),
+    pytest.param((3, 4, 5, 6), np.index_exp[0:3, ..., 0:6], id="4d-explicit-ellipsis"),
+    pytest.param((1, 4, 1, 6), np.index_exp[0, :, 0], id="4d-ints-on-the-axes-of-one"),
 ]
 
 # Index expressions that leave at least one cell untouched: the region must be read before the write.
@@ -520,6 +523,9 @@ PARTIAL_WRITE_CASES = [
     pytest.param((4, 5, 5), np.index_exp[:, :, 0], 20, id="3d-first-column"),
     pytest.param((1, 100), np.index_exp[0, 0:50], 50, id="2d-single-row-half"),
     pytest.param((2, 100), np.index_exp[0], 100, id="2d-one-of-two-rows"),
+    pytest.param((3, 4, 5, 6), np.index_exp[1], 120, id="4d-one-slab"),
+    pytest.param((3, 4, 5, 6), np.index_exp[:, ::2, :, 1:5], 120, id="4d-strided-and-ranged"),
+    pytest.param((3, 4, 5, 6), np.index_exp[..., 0], 60, id="4d-last-axis-int"),
 ]
 
 
@@ -810,3 +816,123 @@ class TestClearWholeArray:
 
 if __name__ == "__main__":
     pytest.main()
+
+
+# Index expressions with a negative step, which HDF5 cannot select itself: the adapter reverses the data instead
+NEGATIVE_STEP_CASES = [
+    pytest.param((100,), np.index_exp[::-1], id="1d-reversed"),
+    pytest.param((100,), np.index_exp[::-2], id="1d-reversed-every-other"),
+    pytest.param((100,), np.index_exp[8:2:-2], id="1d-reversed-range"),
+    pytest.param((100,), np.index_exp[-1::-3], id="1d-reversed-from-the-end"),
+    pytest.param((100,), np.index_exp[50::-1], id="1d-reversed-half"),
+    pytest.param((10, 10), np.index_exp[::-1], id="2d-reversed-rows"),
+    pytest.param((10, 10), np.index_exp[::-1, ::2], id="2d-reversed-rows-strided-columns"),
+    pytest.param((10, 10), np.index_exp[::2, ::-1], id="2d-strided-rows-reversed-columns"),
+    pytest.param((10, 10), np.index_exp[::-1, ::-1], id="2d-reversed-both"),
+    pytest.param((10, 10), np.index_exp[3, ::-3], id="2d-int-and-reversed"),
+    pytest.param((10, 10), np.index_exp[9:1:-2, 1:9:3], id="2d-reversed-range-and-strided"),
+    pytest.param((4, 5, 5), np.index_exp[::-1, :, ::-2], id="3d-two-axes-reversed"),
+    pytest.param((4, 5, 5), np.index_exp[::-1, 2, 4:0:-1], id="3d-reversed-int-reversed"),
+    pytest.param((1,), np.index_exp[::-1], id="single-cell-reversed"),
+    pytest.param((3, 4, 5, 6), np.index_exp[::-1], id="4d-reversed-first"),
+    pytest.param((3, 4, 5, 6), np.index_exp[::-1, ::2, ::-3, ::-1], id="4d-mixed"),
+    pytest.param((3, 4, 5, 6), np.index_exp[2, ::-1, 1, 5:0:-2], id="4d-ints-and-reversed"),
+    pytest.param((3, 4, 5, 6), np.index_exp[..., ::-2], id="4d-ellipsis-reversed-last"),
+]
+
+
+class TestNegativeStep:
+    """A negative step selects the same cells as its positive twin, in the reversed order, exactly as in numpy."""
+
+    @pytest.mark.parametrize(("shape", "bounds"), NEGATIVE_STEP_CASES)
+    def test_read_follows_numpy(self, adapter, tmp_path, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        values = real_values_everywhere(shape)
+        preload(path, values)
+
+        data = adapter.read_data(path, shape, bounds, FILL, DTYPE)
+
+        assert np.array_equal(data, values[bounds])
+
+    @pytest.mark.parametrize(("shape", "bounds"), NEGATIVE_STEP_CASES)
+    def test_read_of_an_empty_array_has_the_shape_of_the_selection(self, adapter, tmp_path, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+
+        data = adapter.read_data(path, shape, bounds, FILL, DTYPE)
+
+        assert np.shape(data) == np.full(shape, FILL)[bounds].shape
+        assert np.all(np.isnan(data))
+
+    @pytest.mark.parametrize(("shape", "bounds"), NEGATIVE_STEP_CASES)
+    def test_update_follows_numpy(self, adapter, tmp_path, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        values = real_values_everywhere(shape)
+        preload(path, values)
+        new_data = -region_data(shape, bounds)
+        expected = values.copy()
+        expected[bounds] = new_data
+
+        adapter.update_data(path, bounds, new_data, DTYPE, shape, FILL, None)
+
+        assert np.array_equal(stored(path), expected)
+        assert empty_cells(path) == 0
+
+    @pytest.mark.parametrize(("shape", "bounds"), NEGATIVE_STEP_CASES)
+    def test_update_into_an_empty_array_follows_numpy(self, adapter, tmp_path, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        new_data = -region_data(shape, bounds)
+        expected = np.full(shape, FILL, dtype=DTYPE)
+        expected[bounds] = new_data
+
+        adapter.update_data(path, bounds, new_data, DTYPE, shape, FILL, None)
+
+        assert np.array_equal(stored(path), expected, equal_nan=True)
+        assert empty_cells(path) == int(np.count_nonzero(np.isnan(expected)))
+
+    @pytest.mark.parametrize(("shape", "bounds"), NEGATIVE_STEP_CASES)
+    def test_update_with_a_scalar(self, adapter, tmp_path, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        values = real_values_everywhere(shape)
+        preload(path, values)
+        expected = values.copy()
+        expected[bounds] = -7.0
+
+        adapter.update_data(path, bounds, np.float64(-7.0), DTYPE, shape, FILL, None)
+
+        assert np.array_equal(stored(path), expected)
+
+    @pytest.mark.parametrize(("shape", "bounds"), NEGATIVE_STEP_CASES)
+    def test_fill_values_count_exactly_the_selection(self, adapter, tmp_path, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        values = real_values_everywhere(shape)
+        preload(path, values)
+        expected = values.copy()
+        expected[bounds] = FILL
+        selected = int(np.count_nonzero(np.isnan(expected)))
+
+        adapter.update_data(
+            path, bounds, np.full(np.shape(expected[bounds]), FILL, dtype=DTYPE), DTYPE, shape, FILL, None
+        )
+
+        assert empty_cells(path) == selected
+        if selected == int(np.prod(shape, dtype=int)):
+            assert not has_data(path)
+        else:
+            assert np.array_equal(stored(path), expected, equal_nan=True)
+
+    @pytest.mark.parametrize(("shape", "bounds"), NEGATIVE_STEP_CASES)
+    def test_clear_follows_numpy(self, adapter, tmp_path, shape, bounds):
+        path = make_file(adapter, tmp_path, shape)
+        values = real_values_everywhere(shape)
+        preload(path, values)
+        expected = values.copy()
+        expected[bounds] = FILL
+        selected = int(np.count_nonzero(np.isnan(expected)))
+
+        adapter.clear_data(path, shape, bounds, FILL)
+
+        assert empty_cells(path) == selected
+        if selected == int(np.prod(shape, dtype=int)):
+            assert not has_data(path)
+        else:
+            assert np.array_equal(stored(path), expected, equal_nan=True)
