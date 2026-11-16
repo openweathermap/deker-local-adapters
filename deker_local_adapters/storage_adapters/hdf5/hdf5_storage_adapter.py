@@ -53,7 +53,10 @@ def flip_axes(data: ndarray | Numeric, axes: tuple[int, ...]) -> ndarray | Numer
 class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
     """Local HDF5 storage adapter.
 
-    Wraps `h5py` files managing logic.
+    Wraps `h5py` files managing logic. A file holds three datasets: ``meta`` with the JSON metadata of the
+    array, ``empty_cells`` with the number of cells never written or cleared, and ``data``, which appears with
+    the first write and disappears when every cell is empty again. A file is opened without the HDF5 locking:
+    the locks are the ``flock`` ones of Deker.
     """
 
     file_ext: str = ".hdf5"
@@ -226,6 +229,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
 
         :param path: path to hdf5 file
         :returns: array metadata decoded from the ``meta`` dataset
+        :raises DekerArrayError: if the file has no ``meta`` dataset
         """
         self.logger.debug(f"trying to read meta from {path}")
         with h5py.File(path, mode="r", locking=False) as f:
@@ -249,11 +253,16 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         fill_value: Numeric,
         collection_options: HDF5Options | None,
     ) -> None:
-        """Update array data in hdf5 file.
+        """Update array data in hdf5 file and keep the counter of empty cells true.
+
+        The ``data`` dataset is created with the declared fill value at the first write, so only the written
+        region is stored; it is removed when the write leaves every cell empty. The counter moves by the
+        difference between the empty cells of the region before and after the write; a write that covers the
+        whole array does not read the old content.
 
         :param path: path to hdf5 file
         :param bounds: array slice
-        :param data: new data for array slice
+        :param data: new data for array slice, of the shape of the bounds or a number
         :param dtype: array dtype
         :param shape: array shape
         :param fill_value: array fill_value
@@ -325,11 +334,12 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
             raise e
 
     def update_meta_custom_attributes(self, path: Path, attributes: dict) -> dict:
-        """Update metadata in the existing array in hdf5 file.
+        """Replace the custom attributes in the ``meta`` dataset of the file; the dataset is recreated.
 
         :param path: path to hdf5 file
         :param attributes: new custom attributes
         :returns: the stored custom attributes
+        :raises DekerArrayError: if the file has no ``meta`` dataset
         """
         try:
             self.logger.debug(f"trying to update meta in {path}")
@@ -352,11 +362,13 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
             raise e
 
     def clear_data(self, path: Path, array_shape: tuple[int, ...], bounds: Slice, fill_value: Numeric) -> None:
-        """Clear array data in hdf5 file.
+        """Set the cells within the bounds to the fill value and keep the counter of empty cells true.
+
+        The ``data`` dataset is removed when every cell is empty afterwards; a file without data is left as it is.
 
         :param path: path to hdf5 file
         :param array_shape: array shape
-        :param bounds: array bounds to update
+        :param bounds: array bounds to clear
         :param fill_value: array fill_value
         """
         try:

@@ -45,7 +45,11 @@ class HDF5CompressionOpts(Serializer):
     compression_opts: list | tuple | int | None = None
 
     def __post_init__(self) -> None:
-        """Validate the compression filter."""
+        """Validate the compression filter and its options; an empty list of options becomes ``None``.
+
+        :raises DekerValidationError: if the filter or its options are of a wrong type, negative, or the options
+          are given without a filter
+        """
         if self.compression is not None:
             if not isinstance(self.compression, (str, int)) or isinstance(self.compression, bool):
                 raise DekerValidationError(
@@ -128,7 +132,11 @@ class HDF5Options(BaseCollectionOptions):
     compression_opts: HDF5CompressionOpts = field(default_factory=HDF5CompressionOpts)
 
     def __post_init__(self) -> None:
-        """Validate collection options."""
+        """Validate collection options; a list of chunk sizes becomes a tuple, ``compression_opts=None`` no compression.
+
+        :raises DekerValidationError: if ``chunks`` is neither ``None``, ``True`` nor a non-empty sequence of
+          integers, or ``compression_opts`` is not an ``HDF5CompressionOpts``
+        """
         if self.chunks is not None:
             if not isinstance(self.chunks, (bool, list, tuple)):
                 raise DekerValidationError(
@@ -174,10 +182,16 @@ class HDF5Options(BaseCollectionOptions):
 
     @classmethod
     def _process_options(cls, storage_options: dict | None) -> dict:  # noqa: C901
-        """Validate and convert options for HDF5.
+        """Validate and convert the options as they are stored in the collection metadata.
+
+        The stored form is ``{"compression": {"compression": <filter>, "options": [...]},
+        "chunks": {"mode": "none" | "true" | "manual", "size": [...]}}``: ``none`` means no compression or
+        chunking, a filter name that is not built in is a filter id of ``hdf5plugin``.
 
         :param storage_options: HDF5 compression options and/or chunks.
         :returns: validated options ready for HDF5Options
+        :raises DekerValidationError: if a gzip level is not an integer
+        :raises ValueError: if options are given to the lzf filter or a filter id is not a number
         """
         coll_params: dict = {}
         if storage_options:

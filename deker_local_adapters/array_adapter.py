@@ -14,7 +14,6 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import logging
 import os
 
 from collections.abc import Generator
@@ -43,7 +42,12 @@ if TYPE_CHECKING:
 
 
 class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
-    """Default adapter for managing Array instances."""
+    """Adapter of the ``Arrays`` of a collection on the local disk.
+
+    An ``Array`` is a main file in the data directory, named by its id, and a symlink to it in the symlinks
+    directory, placed by its primary attributes. The reads hold a shared lock on the main file, the writes,
+    the clears, the attribute updates and the deletion an exclusive one.
+    """
 
     def __init__(
         self,
@@ -53,6 +57,14 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         executor: "ThreadPoolExecutor",
         collection_options: Optional["BaseCollectionOptions"] = None,
     ) -> None:
+        """LocalArrayAdapter constructor.
+
+        :param collection_path: directory of the collection
+        :param ctx: context of the client
+        :param storage_adapter: type of the adapter of the files
+        :param executor: thread pool the Arrays of a VArray are processed in
+        :param collection_options: chunking and compression options of the collection
+        """
         self.collection_options = collection_options
         self.data_dir = ctx.config.array_data_directory
         self.symlinks_dir = ctx.config.array_symlinks_directory
@@ -67,6 +79,13 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         vpos: tuple[int, ...],
         array_primary_attributes_schema: tuple[AttributeSchema, ...],
     ) -> Path | None:
+        """Find the symlink of the Array of a VArray at a position.
+
+        :param vid: id of the VArray
+        :param vpos: ``v_position`` of the Array in the ``vgrid``
+        :param array_primary_attributes_schema: schemas of the primary attributes of the Arrays
+        :returns: the symlink, ``None`` if there is no Array at the position
+        """
         sympath_to_dir = get_symlink_path(
             self.collection_path / self.symlinks_dir,
             array_primary_attributes_schema,
@@ -108,11 +127,12 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
     @check_ctx_state
     @ReadArrayLock()
     def read_data(self, array: Array, bounds: Slice) -> Numeric | ndarray:
-        """Read data from the existing array.
+        """Read data from the existing array, holding its file shared.
 
         :param array: Array instance
         :param bounds: array bounds to read
         :returns: data within the bounds; a scalar for a single cell
+        :raises DekerLockError: if a writer holds the file
         """
         filename = self._get_main_path_to_file(array)
 
@@ -121,10 +141,11 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
     @check_ctx_state
     @ReadArrayLock()
     def read_meta(self, array: Array | Path) -> ArrayMeta:
-        """Read array metadata.
+        """Read array metadata, holding its file shared.
 
         :param array: Array instance or the path to its main file
         :returns: array metadata
+        :raises DekerLockError: if a writer holds the file
         """
         filename = array if isinstance(array, Path) else self._get_main_path_to_file(array)
 
@@ -154,16 +175,20 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
     @check_ctx_state
     @WriteArrayLock()
     def update(self, array: Array, bounds: Slice, data: Data) -> None:
-        """Update data in the existing array.
+        """Update data in the existing array, holding its file exclusively.
 
         :param array: Array instance
         :param bounds: array bounds to be updated
-        :param data: np.ndarray with array data
+        :param data: new data of the shape of the bounds, or a number that fills them
+        :raises DekerArrayError: if the data is ``None``
+        :raises DekerArrayTypeError: if the data does not fit the dtype of the array
+        :raises IndexError: if the data does not fit the shape of the bounds
+        :raises DekerLockError: if the file is not released within the write lock timeout
         """
         filename = self._get_main_path_to_file(array)
 
         if data is None:
-            raise ValueError("Updating data shall not be None")
+            raise DekerArrayError("Updating data shall not be None")
         data = self._process_data(array.dtype, array.shape, data, bounds)
         self.storage_adapter.update_data(
             filename,
@@ -178,10 +203,11 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
     @check_ctx_state
     @WriteArrayLock()
     def update_meta_custom_attributes(self, array: Array, attributes: dict) -> None:
-        """Update metadata in the existing array.
+        """Replace the custom attributes in the file of the array, holding it exclusively, and in the object.
 
         :param array: Array instance
         :param attributes: new custom attributes
+        :raises DekerLockError: if the file is not released within the write lock timeout
         """
         filename = self._get_main_path_to_file(array)
 
@@ -191,16 +217,17 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
                 attributes,
             )
         except Exception as e:
-            logging.exception(e)
+            self.logger.exception(e)
             raise e
 
     @check_ctx_state
     @WriteArrayLock()
     def clear(self, array: Array, bounds: Slice) -> None:
-        """Clear data in the existing array.
+        """Set the cells within the bounds to the fill value, holding the file exclusively.
 
         :param array: Array instance
-        :param bounds: array bounds to update
+        :param bounds: array bounds to clear
+        :raises DekerLockError: if the file is not released within the write lock timeout
         """
         filename = self._get_main_path_to_file(array)
         self.storage_adapter.clear_data(
@@ -226,7 +253,7 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
 
     @check_ctx_state
     def delete_all_by_vid(self, vid: str, collection: "Collection") -> None:
-        """Delete all arrays of VArray.
+        """Delete all the Arrays of a VArray, each waiting for its readers and writers.
 
         :param vid: VArray id
         :param collection: collection instance

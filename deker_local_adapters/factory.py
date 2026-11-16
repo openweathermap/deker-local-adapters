@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 
 class AdaptersFactory(BaseAdaptersFactory):
-    """Adapters factory for Collections, Arrays and VArrays."""
+    """Adapters factory for Collections, Arrays and VArrays of a local storage: the ``file://`` scheme."""
 
     uri_schemes = ("file",)
 
@@ -72,15 +72,19 @@ class AdaptersFactory(BaseAdaptersFactory):
 
     @check_ctx_state
     def get_collection_adapter(self) -> "BaseCollectionAdapter":
-        """Create collection adapter."""
+        """Create collection adapter.
+
+        :returns: LocalCollectionAdapter instance
+        """
         return LocalCollectionAdapter(self.ctx)
 
 
 def storage_adapter_factory(storage_adapter: str | None = None) -> type["BaseStorageAdapter"]:
     """Return class of storage adapter based on the string input.
 
-    :param storage_adapter: string with storage adapter name.
+    :param storage_adapter: string with storage adapter name; ``HDF5StorageAdapter`` is the only one and the default
     :returns: storage adapter class
+    :raises DekerStorageError: for any other name
     """
     # Currently we support only hdf5
     if storage_adapter and storage_adapter != StorageAdapterTypes.HDF5StorageAdapter.value:

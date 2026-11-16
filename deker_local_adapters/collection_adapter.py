@@ -15,7 +15,6 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 import json
-import logging
 import os
 import shutil
 
@@ -35,9 +34,18 @@ if TYPE_CHECKING:
 
 
 class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
-    """Adapter which stores info in the file system."""
+    """Adapter of the collections of a local storage.
+
+    A collection is a directory under the collections directory of the storage, named by the collection,
+    with a json file of the same name holding its metadata; ``<collection>.lock`` next to the directory is
+    held while the collection is created or cleared and stays as its marker.
+    """
 
     def __init__(self, ctx: CTX) -> None:
+        """LocalCollectionAdapter constructor: creates the collections directory of the storage if it is missing.
+
+        :param ctx: context of the client
+        """
         super().__init__(ctx)
         self.metadata_version = "0.2"
         self.file_ext = ".json"
@@ -48,6 +56,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
 
         :param name: Collection name
         :returns: path to the collection directory
+        :raises DekerCollectionAlreadyExistsError: if the directory exists
         """
         path = self.collections_resource / name
         try:
@@ -57,6 +66,12 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
             raise DekerCollectionAlreadyExistsError(f"Collection {name} already exists")
 
     def __create(self, coll_name: str, data: dict, coll_path: Path | None) -> None:
+        """Write the metadata file of the collection into its directory.
+
+        :param coll_name: Collection name
+        :param data: metadata of the collection
+        :param coll_path: directory of the collection
+        """
         if coll_path and coll_path.exists():
             path = coll_path / (coll_name + self.file_ext)
             with open(path, mode="w") as f:
@@ -65,9 +80,12 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
     @check_ctx_state
     @CollectionLock()
     def create(self, collection: "Collection") -> None:
-        """Add collection to the storage and create file structure.
+        """Add collection to the storage and create file structure, holding the collection lock.
 
         :param collection: Collection to be created
+        :raises DekerMemoryError: if one array of the collection would not fit the memory limit, unless the
+          check is skipped by the client
+        :raises DekerCollectionAlreadyExistsError: if a collection of the name exists
         """
         try:
             schema = collection.array_schema
@@ -78,7 +96,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
             prepared = collection.as_dict
             self.__create(coll_name=collection.name, data=prepared, coll_path=coll_path)
         except Exception as e:
-            logging.exception(e)
+            self.logger.exception(e)
             raise e
 
     @check_ctx_state
@@ -87,6 +105,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
 
         :param name: Collection name
         :returns: collection metadata as a dict
+        :raises DekerCollectionNotExistsError: if there is no collection of the name
         """
         coll_path = self.collections_resource / name
         path = coll_path / (name + self.file_ext)
@@ -98,21 +117,26 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
 
     @check_ctx_state
     def delete(self, collection: "Collection") -> None:
-        """Delete collection.
+        """Delete the directory of the collection with everything in it, and its lock file.
+
+        A directory that is gone already is not an error; any other failure to remove it is raised.
 
         :param collection: Collection to delete
         """
         try:
-            shutil.rmtree(self.collections_resource / collection.name, onerror=FileNotFoundError)
+            try:
+                shutil.rmtree(self.collections_resource / collection.name)
+            except FileNotFoundError:
+                pass
             Path.unlink(self.collections_resource / (collection.name + ".lock"), missing_ok=True)
         except Exception as e:
-            logging.exception(e)
+            self.logger.exception(e)
             raise e
 
     @check_ctx_state
     @CollectionLock()
     def clear(self, collection: "Collection") -> None:
-        """Clear collection directory.
+        """Remove everything from the directory of the collection but its metadata file, holding the collection lock.
 
         :param collection: Collection to be cleared
         """
@@ -127,7 +151,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
                 for d in dirs:
                     shutil.rmtree(os.path.join(root, d))
         except Exception as e:
-            logging.exception(e)
+            self.logger.exception(e)
             raise e
 
     @property
@@ -147,6 +171,10 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
 
     @check_ctx_state
     def __iter__(self) -> Generator[dict, None, None]:
+        """Iterate over the metadata of the collections: every directory under the collections directory.
+
+        :yields: the metadata of every collection
+        """
         for directory in os.scandir(self.collections_resource):
             if os.path.isdir(directory):
                 meta = self.read(directory.name)

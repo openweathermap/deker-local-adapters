@@ -64,7 +64,10 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         pass
 
     def _delete(self, symlink: Path) -> None:
-        """Delete symlink and realpath files from disk.
+        """Delete the symlink and the main file it points to, with the directories that become empty.
+
+        The directories above both files are removed while they are empty, up to the data and symlinks
+        directories of the collection, which stay. A missing file is not an error.
 
         :param symlink: path to the symlink file
         """
@@ -89,7 +92,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
 
     @check_ctx_state
     def delete(self, array: ArrayT) -> None:
-        """Delete the existing array.
+        """Delete the files of the array.
 
         :param array: array instance
         """
@@ -114,12 +117,17 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
 
     @check_ctx_state
     def _get_main_path_to_file(self, array: ArrayT) -> Path:
+        """Get the path of the main file of the array.
+
+        :param array: Array or VArray
+        :returns: path of the main file
+        """
         paths = get_paths(array, self.collection_path)
         file = array.id + self.file_ext
         return paths.main / file
 
     def get_filenames_for_create_methods(self, array: ArrayT) -> tuple[Path, Path]:
-        """Return paths to the main file and symlink.
+        """Return paths to the main file and symlink, creating their directories.
 
         !!! DO NOT USE THIS METHOD ANYWHERE EXCEPT adapter.create !!!!
 
@@ -134,7 +142,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         return main_filename, sym_filename
 
     def check_symlink_existence(self, file: Path) -> None:
-        """Check that there is no symlink for a given (V)Array.
+        """Check that the symlink directory of the primary attributes of a (V)Array is empty.
 
         :param file: Path to symlink
         :raises DekerValidationError: if a (V)Array with the same primary attributes exists
@@ -233,6 +241,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         :param array_adapter: Arrays' adapter
         :param varray_adapter: VArrays' adapter, passed by VArrays' adapters only
         :returns: Array or VArray built from the meta
+        :raises DekerMetaDataError: if the metadata is invalid or corrupted
         """
         meta = self.read_meta(path)
 
@@ -260,6 +269,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         :param array_adapter: Arrays' adapter
         :param varray_adapter: VArrays' adapter
         :returns: matching Array or VArray, or ``None`` if nothing was found
+        :raises DekerBrokenSymlinkError: if the symlink of the attributes points to a missing file
         """
         symlinks_path = get_symlink_path(
             path_to_symlink_dir=self.collection_path / self.symlinks_dir,
@@ -307,7 +317,10 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
             return self._init_array(file, collection, array_adapter, varray_adapter)
 
     def __iter__(self) -> Generator[ArrayMeta, None, None]:
-        """Iterate over all the arrays or varrays in collection."""
+        """Iterate over all the arrays or varrays in collection, walking its data directory.
+
+        :yields: the metadata of every main file
+        """
         root_path = self.collection_path / self.data_dir
         for root, _, files in os.walk(root_path):
             for file in files:
