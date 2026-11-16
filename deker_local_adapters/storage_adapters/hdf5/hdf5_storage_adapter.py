@@ -184,6 +184,43 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         self.logger.debug(f"{path} data read OK and closed")
         return data
 
+    def read_empty_cells(self, path: Path) -> int:
+        """Read the stored counter of empty cells of an array.
+
+        :param path: path to hdf5 file
+        :returns: the ``empty_cells`` dataset as stored
+        :raises DekerArrayError: if the file has no counter
+        """
+        with h5py.File(path, mode="r", locking=False) as f:
+            if "empty_cells" not in f:
+                raise DekerArrayError(f"No empty cells counter in {path}. Try to delete and recreate the array.")
+            return int(f["empty_cells"][()])
+
+    def count_empty_cells(self, path: Path, array_shape: tuple[int, ...], fill_value: Numeric) -> int:
+        """Count the empty cells of an array in its data, whatever the stored counter says.
+
+        A file without the ``data`` dataset is empty whole.
+
+        :param path: path to hdf5 file
+        :param array_shape: array shape
+        :param fill_value: array fill_value
+        :returns: number of cells holding the fill value
+        """
+        with h5py.File(path, mode="r", locking=False) as f:
+            if "data" not in f:
+                return calculate_total_cells_in_array(array_shape)
+            return self._count_fill_values(f["data"][()], fill_value)
+
+    def write_empty_cells(self, path: Path, empty_cells: int) -> None:
+        """Replace the stored counter of empty cells of an array.
+
+        :param path: path to hdf5 file
+        :param empty_cells: the new value of the counter
+        """
+        with h5py.File(path, mode="r+", locking=False) as f:
+            f["empty_cells"][()] = empty_cells
+            f.flush()
+
     def read_meta(self, path: Path) -> ArrayMeta:
         """Read array metadata from hdf5 file.
 
