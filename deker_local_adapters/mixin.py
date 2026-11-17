@@ -253,6 +253,34 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
             array = Array._create_from_meta(collection, meta, array_adapter, varray_adapter)
         return cast("ArrayT", array)
 
+    def _symlink_by_primary_attributes(self, primary_attributes: dict, schema: "BaseArraysSchema") -> Path | None:
+        """Find the symlink of the array with the primary attributes.
+
+        The symlinks of the arrays with the attributes live in one directory; the first file there is the one.
+
+        :param primary_attributes: Key attributes
+        :param schema: (V)Array schema
+        :returns: the path of the symlink, or ``None`` if there is no array with the attributes
+        :raises DekerBrokenSymlinkError: if the symlink of the attributes points to a missing file
+        """
+        symlinks_path = get_symlink_path(
+            path_to_symlink_dir=self.collection_path / self.symlinks_dir,
+            primary_attributes_schema=schema.primary_attributes,
+            primary_attributes=primary_attributes,
+        )
+        try:
+            for file in os.scandir(symlinks_path):
+                if file.is_file():
+                    path = Path(symlinks_path) / file.name
+                    self.logger.debug("filtered %s", path)
+                    return path
+                # If symlink is broken
+                elif file.is_symlink() and not file.is_file():
+                    raise DekerBrokenSymlinkError(f"Seems like {file} is a broken symlink.")
+        except FileNotFoundError:
+            self.logger.debug("nothing was filtered")
+        return None
+
     def get_by_primary_attributes(
         self,
         primary_attributes: dict,
@@ -269,28 +297,27 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         :param array_adapter: Arrays' adapter
         :param varray_adapter: VArrays' adapter
         :returns: matching Array or VArray, or ``None`` if nothing was found
+        :raises DekerFilterError: if the attributes are not exactly the primary attributes of the schema
         :raises DekerBrokenSymlinkError: if the symlink of the attributes points to a missing file
         """
-        symlinks_path = get_symlink_path(
-            path_to_symlink_dir=self.collection_path / self.symlinks_dir,
-            primary_attributes_schema=schema.primary_attributes,
-            primary_attributes=primary_attributes,
-        )
+        path = self._symlink_by_primary_attributes(self._check_primary_attributes(primary_attributes, schema), schema)
+        if path is None:
+            return None
+        return self._init_array(path, collection, array_adapter, varray_adapter)
 
-        try:
-            for file in os.scandir(
-                symlinks_path,
-            ):
-                if file.is_file():
-                    array_name = file.name
-                    path = Path(symlinks_path) / array_name
-                    self.logger.debug("filtered %s", path)
-                    return self._init_array(path, collection, array_adapter, varray_adapter)
-                # If symlink is broken
-                elif file.is_symlink() and not file.is_file():
-                    raise DekerBrokenSymlinkError(f"Seems like {file} is a broken symlink.")
-        except FileNotFoundError:
-            self.logger.debug("nothing was filtered")
+    def get_id_by_primary_attributes(self, primary_attributes: dict, schema: "BaseArraysSchema") -> str | None:
+        """Find the id of the array with the primary attributes: the name of its symlink, without reading the file.
+
+        :param primary_attributes: Key attributes
+        :param schema: (V)Array schema
+        :returns: the id, or ``None`` if there is no array with the attributes
+        :raises DekerFilterError: if the attributes are not exactly the primary attributes of the schema
+        :raises DekerBrokenSymlinkError: if the symlink of the attributes points to a missing file
+        """
+        path = self._symlink_by_primary_attributes(self._check_primary_attributes(primary_attributes, schema), schema)
+        if path is None:
+            return None
+        return path.name.removesuffix(self.file_ext)
 
     def get_by_id(
         self,

@@ -27,6 +27,11 @@ protocol changed, so every process working with one storage must be updated at o
   `read_empty_cells`, `count_empty_cells` and `write_empty_cells`; the HDF5 adapter implements them.
 - The adapter interfaces are generic over the path and the array type, and `create()` returns the
   created array (`deker` 2.0.0).
+- `get_id_by_primary_attributes(primary_attributes, schema)` of the array adapters: the id of an array
+  from the name of its symlink, without opening its file. A VArray finds its Arrays with it.
+- `get_by_primary_attributes` and `get_id_by_primary_attributes` raise `DekerFilterError` unless the attributes
+  are exactly the primary attributes of the schema: without them the search used to return the first file
+  of the symlinks directory.
 
 ### Changed
 
