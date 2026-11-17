@@ -132,11 +132,11 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         :raises FileExistsError: if the file already exists
         """
         try:
-            self.logger.debug(f"trying to create {path}")
+            self.logger.debug("trying to create %s", path)
             # free space released by dataset recreation (``meta`` updates) is tracked across file opens
             # and reused instead of growing the file; readable by HDF5 >= 1.10.1 (any h5py 3.x)
             with h5py.File(path, "w-", locking=False, fs_strategy="fsm", fs_persist=True) as f:
-                self.logger.debug(f"{path} opened in 'w-'-mode")
+                self.logger.debug("%s opened in 'w-'-mode", path)
                 if not isinstance(metadata, (str, bytes)):
                     metadata = json.dumps(metadata, default=str)
                 self._create_meta_dataset(f, metadata)
@@ -145,9 +145,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
                 )
                 empty_cells.flush()
                 f.flush()
-            self.logger.debug(f"{path} created and closed")
+            self.logger.debug("%s created and closed", path)
         except FileExistsError:
-            self.logger.debug(f"{path} already exists")
+            self.logger.debug("%s already exists", path)
             raise
         except Exception as e:
             self.logger.exception(e)
@@ -171,10 +171,10 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         :returns: data within the bounds, filled with ``fill_value`` where the array is empty;
             a scalar when the bounds select a single cell
         """
-        self.logger.debug(f"trying to read data from {path}")
+        self.logger.debug("trying to read data from %s", path)
         with h5py.File(path, mode="r", locking=False) as f:
-            self.logger.debug(f"{path} opened in 'r'-mode")
-            self.logger.debug(f"trying to read data from {path}")
+            self.logger.debug("%s opened in 'r'-mode", path)
+            self.logger.debug("trying to read data from %s", path)
             ds: Dataset | None = f.get("data")
             if ds is None:
                 # no data stored yet: nothing to read, only the requested region is allocated
@@ -184,7 +184,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
             else:
                 forward, flipped = positive_bounds(array_shape, bounds)
                 data = flip_axes(ds[forward], flipped)
-        self.logger.debug(f"{path} data read OK and closed")
+        self.logger.debug("%s data read OK and closed", path)
         return data
 
     def read_empty_cells(self, path: Path) -> int:
@@ -231,16 +231,16 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         :returns: array metadata decoded from the ``meta`` dataset
         :raises DekerArrayError: if the file has no ``meta`` dataset
         """
-        self.logger.debug(f"trying to read meta from {path}")
+        self.logger.debug("trying to read meta from %s", path)
         with h5py.File(path, mode="r", locking=False) as f:
-            self.logger.debug(f"{path} opened in 'r'-mode")
+            self.logger.debug("%s opened in 'r'-mode", path)
             ds: Dataset = f.get("meta")
             if not ds:
                 raise DekerArrayError("No metadata in the array. Try to delete and recreate the array.")
             data = ds[()]
         decoded = data.decode("utf-8")
         meta = json.loads(decoded)
-        self.logger.debug(f"{path} meta read OK and closed")
+        self.logger.debug("%s meta read OK and closed", path)
         return meta
 
     def update_data(
@@ -269,9 +269,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         :param collection_options: chunking and compression options
         """
         try:
-            self.logger.debug(f"trying to update data in {path}")
+            self.logger.debug("trying to update data in %s", path)
             with h5py.File(path, mode="r+", locking=False) as f:
-                self.logger.debug(f"{path} opened in 'r+'-mode")
+                self.logger.debug("%s opened in 'r+'-mode", path)
                 empty_cells_ds: Dataset = f["empty_cells"]
                 total_cells = calculate_total_cells_in_array(shape)
                 subset_shape = create_shape_from_slice(shape, bounds)
@@ -328,7 +328,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
                 empty_cells_ds[()] = empty_cells
                 empty_cells_ds.flush()
                 f.flush()
-            self.logger.debug(f"{path} data updated OK and closed")
+            self.logger.debug("%s data updated OK and closed", path)
         except Exception as e:
             self.logger.exception(e)
             raise e
@@ -342,9 +342,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         :raises DekerArrayError: if the file has no ``meta`` dataset
         """
         try:
-            self.logger.debug(f"trying to update meta in {path}")
+            self.logger.debug("trying to update meta in %s", path)
             with h5py.File(path, "r+", locking=False) as f:
-                self.logger.debug(f"{path} opened in 'r+'-mode")
+                self.logger.debug("%s opened in 'r+'-mode", path)
                 ds = f.get("meta")
                 if not ds:
                     raise DekerArrayError("No metadata in the array. Try to delete and recreate the array.")
@@ -355,7 +355,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
                 meta["custom_attributes"] = attributes
                 self._create_meta_dataset(f, json.dumps(meta, default=str))
                 f.flush()
-            self.logger.debug(f"{path} meta updated OK and closed")
+            self.logger.debug("%s meta updated OK and closed", path)
             return attributes
         except Exception as e:
             self.logger.exception(e)
@@ -372,9 +372,9 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         :param fill_value: array fill_value
         """
         try:
-            self.logger.debug(f"trying to clear data in {path}")
+            self.logger.debug("trying to clear data in %s", path)
             with h5py.File(path, "r+", locking=False) as f:
-                self.logger.debug(f"{path} opened in 'r+'-mode")
+                self.logger.debug("%s opened in 'r+'-mode", path)
                 ds: Dataset | None = f.get("data")
                 if ds is not None:
                     empty_cells_ds: Dataset = f["empty_cells"]
@@ -399,7 +399,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
                     empty_cells_ds[()] = empty_cells
                     empty_cells_ds.flush()
                     f.flush()
-            self.logger.debug(f"{path} data cleared OK and closed")
+            self.logger.debug("%s data cleared OK and closed", path)
         except Exception as e:
             self.logger.exception(e)
             raise e

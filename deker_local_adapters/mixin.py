@@ -284,7 +284,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
                 if file.is_file():
                     array_name = file.name
                     path = Path(symlinks_path) / array_name
-                    self.logger.debug(f"filtered {path}")
+                    self.logger.debug("filtered %s", path)
                     return self._init_array(path, collection, array_adapter, varray_adapter)
                 # If symlink is broken
                 elif file.is_symlink() and not file.is_file():
@@ -313,7 +313,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         path = get_main_path(id_, data_path)
         file = path / filename
         if file.exists():
-            self.logger.debug(f"filtered {file}")
+            self.logger.debug("filtered %s", file)
             return self._init_array(file, collection, array_adapter, varray_adapter)
 
     def __iter__(self) -> Generator[ArrayMeta, None, None]:

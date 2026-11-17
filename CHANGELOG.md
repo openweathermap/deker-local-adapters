@@ -61,6 +61,7 @@ protocol changed, so every process working with one storage must be updated at o
 
 ### Internals and tooling
 
+- The messages of the log are formatted only when they are written.
 - The build moved from poetry to uv, ruff and pydoclint replace black, flake8, isort and darglint;
   `make ci`, `make test-matrix`, `make install-matrix`; `py.typed`; 100% test coverage required;
   `pytest-timeout`; tests in random order.
