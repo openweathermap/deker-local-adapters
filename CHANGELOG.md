@@ -57,6 +57,10 @@ protocol changed, so every process working with one storage must be updated at o
 
 ### Fixed
 
+- Deleting the Arrays of a VArray from several threads left empty directories behind: the Arrays whose ids
+  share the first characters share the directories of the data tree, and the deletion that lost the removal
+  of a shared directory stopped there, before the directories of its own symlink. A directory removed by
+  another deletion is skipped now and the climb goes on; a directory filled meanwhile stays.
 - The empty-cell counter of a file drifted: every write decreased it by the size of the region,
   even when the region was written before. It is now computed from the data: how many empty cells
   the region had before the write and how many it has after. An old wrong counter is reported and

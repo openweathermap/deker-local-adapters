@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import errno
 import os
 
 from abc import abstractmethod
@@ -63,32 +64,49 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         """
         pass
 
+    def _remove_empty_parents(self, file: Path) -> None:
+        """Remove the directories above a file while they are empty, up to the data or symlinks directory.
+
+        The arrays whose ids share the first characters share the directories of the data tree, and their
+        deletions may run at once in several threads: a directory that is gone by the time of its removal
+        was removed by another deletion, and the climb goes on to its parent; a directory that is not empty
+        anymore (something was created in it meanwhile) stays, and the climb stops there.
+
+        :param file: the file whose parents are removed
+        """
+        for folder in file.parents:  # pragma: no branch  # the climb always stops at the data/symlinks directory
+            if any(str(folder).endswith(directory) for directory in self.dirs):
+                break
+            try:
+                if os.listdir(folder):
+                    break
+                os.rmdir(folder)
+            except FileNotFoundError:
+                continue
+            except OSError as e:
+                if e.errno == errno.ENOTEMPTY:
+                    break
+                raise
+
     def _delete(self, symlink: Path) -> None:
         """Delete the symlink and the main file it points to, with the directories that become empty.
 
         The directories above both files are removed while they are empty, up to the data and symlinks
-        directories of the collection, which stay. A missing file is not an error.
+        directories of the collection, which stay. A missing symlink or a missing main file is not an error.
 
         :param symlink: path to the symlink file
         """
         try:
             data = symlink.readlink()
-            if data.exists():
-                os.remove(data)
-
-            symlink.unlink(missing_ok=True)
-
-            for file in (data, symlink):
-                if file.parent.exists():
-                    # climbs up while the directories are empty; always stops at the data/symlinks directory
-                    for folder in file.parents:  # pragma: no branch
-                        subs = os.listdir(folder)
-                        if subs or any(str(folder).endswith(directory) for directory in self.dirs):
-                            break
-                        if folder.exists():  # pragma: no branch  # guard: listdir() above has just succeeded
-                            os.rmdir(folder)
         except FileNotFoundError:
-            pass
+            return  # no symlink: nothing to delete
+        try:
+            os.remove(data)
+        except FileNotFoundError:
+            pass  # the main file is gone already: the symlink is removed anyway
+        symlink.unlink(missing_ok=True)
+        for file in (data, symlink):
+            self._remove_empty_parents(file)
 
     @check_ctx_state
     def delete(self, array: ArrayT) -> None:
