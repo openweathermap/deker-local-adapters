@@ -1,7 +1,6 @@
 import string
 
 from datetime import datetime, timedelta, timezone
-from typing import List
 
 import pytest
 
@@ -9,8 +8,8 @@ from deker.ABC.base_schemas import BaseDimensionSchema
 from deker.schemas import ArraySchema, AttributeSchema, DimensionSchema, TimeDimensionSchema, VArraySchema
 
 
-@pytest.fixture()
-def dimensions() -> List[BaseDimensionSchema]:
+@pytest.fixture
+def dimensions() -> list[BaseDimensionSchema]:
     """Dimensions for array schema."""
     return [
         DimensionSchema(name="x", size=10),
@@ -24,8 +23,8 @@ def dimensions() -> List[BaseDimensionSchema]:
     ]
 
 
-@pytest.fixture()
-def dimensions_with_string_time() -> List[BaseDimensionSchema]:
+@pytest.fixture
+def dimensions_with_string_time() -> list[BaseDimensionSchema]:
     """Dimensions for array schema."""
     return [
         DimensionSchema(name="x", size=10),
@@ -39,24 +38,24 @@ def dimensions_with_string_time() -> List[BaseDimensionSchema]:
     ]
 
 
-@pytest.fixture()
-def array_schema(dimensions: List[DimensionSchema]) -> ArraySchema:
+@pytest.fixture
+def array_schema(dimensions: list[DimensionSchema]) -> ArraySchema:
     """Creates a simple array schema.
 
     :param dimensions: Dimensions of array schema
     """
-    return ArraySchema(dtype=float, dimensions=dimensions)  # type: ignore[arg-type]
+    return ArraySchema(dtype=float, dimensions=dimensions)
 
 
-@pytest.fixture()
-def array_schema_with_attributes(dimensions_with_string_time: List[DimensionSchema]) -> ArraySchema:
+@pytest.fixture
+def array_schema_with_attributes(dimensions_with_string_time: list[DimensionSchema]) -> ArraySchema:
     """Creates an array schema with extra primary attributes.
 
     :param dimensions_with_string_time: Dimensions of array schema
     """
     return ArraySchema(
         dtype=float,
-        dimensions=dimensions_with_string_time,  # type: ignore[arg-type]
+        dimensions=dimensions_with_string_time,
         attributes=[
             AttributeSchema(name="primary_attribute", dtype=int, primary=True),
             AttributeSchema(name="custom_attribute", dtype=float, primary=False),
@@ -65,15 +64,15 @@ def array_schema_with_attributes(dimensions_with_string_time: List[DimensionSche
     )
 
 
-@pytest.fixture()
-def varray_schema(dimensions: List[DimensionSchema]) -> VArraySchema:
+@pytest.fixture
+def varray_schema(dimensions: list[DimensionSchema]) -> VArraySchema:
     """Creates a VArray schema."""
-    return VArraySchema(dimensions=dimensions, dtype=float, vgrid=[2] * len(dimensions))  # type: ignore[arg-type]
+    return VArraySchema(dimensions=dimensions, dtype=float, vgrid=[2] * len(dimensions))
 
 
-@pytest.fixture()
+@pytest.fixture
 def varray_schema_with_attributes(
-    dimensions_with_string_time: List[DimensionSchema],
+    dimensions_with_string_time: list[DimensionSchema],
 ) -> VArraySchema:
     """Creates an array schema with extra primary attributes.
 
@@ -81,7 +80,7 @@ def varray_schema_with_attributes(
     """
     return VArraySchema(
         dtype=float,
-        dimensions=dimensions_with_string_time,  # type: ignore[arg-type]
+        dimensions=dimensions_with_string_time,
         attributes=[
             AttributeSchema(name="primary_attribute", dtype=int, primary=True),
             AttributeSchema(name="custom_attribute", dtype=float, primary=False),

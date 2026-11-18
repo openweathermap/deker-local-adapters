@@ -1,3 +1,4 @@
+import errno
 import os
 import shutil
 
@@ -8,8 +9,14 @@ import pytest
 
 from deker.client import Client
 from deker.collection import Collection
-from deker.errors import DekerMemoryError
+from deker.errors import (
+    DekerAdapterClosedError,
+    DekerCollectionAlreadyExistsError,
+    DekerCollectionNotExistsError,
+    DekerMemoryError,
+)
 from deker.schemas import ArraySchema, DimensionSchema
+from pytest_mock import MockerFixture
 
 from tests.parameters.common import random_string
 
@@ -17,7 +24,7 @@ from deker_local_adapters import AdaptersFactory, LocalCollectionAdapter
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 
-@pytest.mark.asyncio()
+@pytest.mark.asyncio
 class TestCollectionAdapter:
     """Class for testing local collection adapter."""
 
@@ -45,18 +52,21 @@ class TestCollectionAdapter:
             )
         )
         assert root_path.joinpath(factory.ctx.config.collections_directory).joinpath(name).exists()
+        # the lock file of the creation stays as the marker of the collection
+        assert root_path.joinpath(factory.ctx.config.collections_directory).joinpath(name + ".lock").exists()
 
     def test_collection_adapter_create_collection_memory_error(
         self,
         collection_adapter: LocalCollectionAdapter,
         factory: AdaptersFactory,
+        mocker: MockerFixture,
     ):
         """Tests if adapter raises memory error on collection creation.
 
         :param collection_adapter: CollectionAdapter
         :param factory: AdaptersFactory
         """
-        collection_adapter.ctx.config.memory_limit = 100
+        mocker.patch.object(collection_adapter.ctx.config, "memory_limit", 100)  # the ctx is shared by the class
         schema = ArraySchema(
             dimensions=[
                 DimensionSchema(name="x", size=10000),
@@ -172,6 +182,26 @@ class TestCollectionAdapter:
         assert not os.path.exists(array_collection.path)
         assert not os.path.exists(array_collection.path.parent / (array_collection.name + ".lock"))
 
+    def test_collection_adapter_delete_tolerates_a_collection_already_gone(
+        self, collection_adapter: LocalCollectionAdapter, array_collection: Collection
+    ):
+        """Deleting a collection whose directory is gone already is not an error: the lock file is removed anyway."""
+        shutil.rmtree(array_collection.path)
+        lock = array_collection.path.parent / (array_collection.name + ".lock")
+        assert lock.exists()
+        collection_adapter.delete(array_collection)
+        assert not lock.exists()
+
+    def test_collection_adapter_delete_raises_when_the_directory_cannot_be_removed(
+        self, collection_adapter: LocalCollectionAdapter, array_collection: Collection, mocker: MockerFixture
+    ):
+        """A failure to remove the directory is not swallowed: the collection would stay with its files."""
+        # a real OSError carries errno and strerror: rmtree of Python 3.12+ adds the filename to it before raising
+        mocker.patch.object(os, "rmdir", side_effect=PermissionError(errno.EACCES, "read-only storage"))
+        with pytest.raises(PermissionError, match="read-only storage"):
+            collection_adapter.delete(array_collection)
+        assert os.path.exists(array_collection.path)
+
     def test_collection_adapter_get_collection(
         self,
         array_collection: Collection,
@@ -207,6 +237,7 @@ class TestCollectionAdapter:
         assert collection_dir is not None
         collection_dir = os.listdir(collection_dir)
         assert f"{array_collection.name}.json" in collection_dir
+        assert os.path.exists(array_collection.path.parent / (array_collection.name + ".lock"))
 
     def test_collection_adapter_iter(self, client: Client, array_schema: ArraySchema, root_path: Path, ctx):
         for root, dirs, files in os.walk(root_path / ctx.config.collections_directory):
@@ -217,10 +248,78 @@ class TestCollectionAdapter:
 
         names = {random_string() for _ in range(10)}
         collections = [client.create_collection(name, array_schema) for name in names]
-        adapter: LocalCollectionAdapter = collections[0]._Collection__adapter  # type: ignore[attr-defined]
+        adapter: LocalCollectionAdapter = collections[0]._Collection__adapter
         coll_names = {coll["name"] for coll in adapter}
         assert names.issubset(coll_names)
         assert names - coll_names == set()
+
+
+class TestCollectionAdapterClosed:
+    @pytest.mark.parametrize("method", ["create", "delete", "clear", "is_deleted"])
+    def test_closed_adapter_raises(self, ctx, array_collection: Collection, method: str):
+        """Tests if a collection adapter of a closed context answers with DekerAdapterClosedError."""
+        adapter = LocalCollectionAdapter(ctx)
+        ctx.is_closed = True
+        try:
+            with pytest.raises(DekerAdapterClosedError):
+                getattr(adapter, method)(array_collection)
+            with pytest.raises(DekerAdapterClosedError):
+                adapter.read(array_collection.name)
+            with pytest.raises(DekerAdapterClosedError):
+                list(adapter)
+        finally:
+            ctx.is_closed = False
+
+    def test_closed_factory_raises(self, ctx, uri):
+        """Tests if a factory of a closed context gives no adapters."""
+        factory = AdaptersFactory(ctx, uri)
+        ctx.is_closed = True
+        try:
+            with pytest.raises(DekerAdapterClosedError):
+                factory.get_collection_adapter()
+        finally:
+            ctx.is_closed = False
+
+
+class TestCollectionAdapterEdges:
+    def test_create_path_raises_if_directory_exists(self, collection_adapter: LocalCollectionAdapter):
+        name = "already-there"
+        path = collection_adapter._LocalCollectionAdapter__create_path(name)
+        try:
+            with pytest.raises(DekerCollectionAlreadyExistsError):
+                collection_adapter._LocalCollectionAdapter__create_path(name)
+        finally:
+            shutil.rmtree(path)
+
+    def test_create_writes_nothing_without_path(self, collection_adapter: LocalCollectionAdapter, root_path: Path):
+        collection_adapter._LocalCollectionAdapter__create("ghost", {}, None)
+        assert not list(root_path.rglob("ghost*"))
+
+    def test_read_raises_for_missing_collection(self, collection_adapter: LocalCollectionAdapter):
+        with pytest.raises(DekerCollectionNotExistsError):
+            collection_adapter.read("no-such-collection")
+
+    def test_clear_removes_foreign_files_and_directories(self, client: Client, array_collection: Collection):
+        foreign_file = array_collection.path / "stray.txt"
+        foreign_file.write_text("x")
+        foreign_dir = array_collection.path / "stray_dir"
+        foreign_dir.mkdir()
+        (foreign_dir / "inner.txt").write_text("x")
+        array_collection.clear()
+        assert not foreign_file.exists()
+        assert not foreign_dir.exists()
+        assert (array_collection.path / (array_collection.name + ".json")).exists()
+
+    def test_create_skips_memory_check_when_configured(self, root_path, array_schema, executor):
+        from tests.parameters.uri import embedded_uri
+
+        client = Client(embedded_uri(root_path), executor=executor, skip_collection_create_memory_check=True)
+        collection = client.create_collection("no-memory-check", array_schema)
+        try:
+            assert collection.path.exists()
+        finally:
+            collection.delete()
+            client.close()
 
 
 if __name__ == "__main__":

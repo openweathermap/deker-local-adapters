@@ -15,7 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional, Type
+from typing import TYPE_CHECKING, Optional
 
 from deker.ABC import BaseCollectionAdapter
 from deker.ABC.base_factory import BaseAdaptersFactory
@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 
 
 class AdaptersFactory(BaseAdaptersFactory):
-    """Adapters factory for Collections, Arrays and VArrays."""
+    """Adapters factory for Collections, Arrays and VArrays of a local storage: the ``file://`` scheme."""
 
     uri_schemes = ("file",)
 
@@ -46,7 +46,7 @@ class AdaptersFactory(BaseAdaptersFactory):
     def get_array_adapter(
         self,
         collection_path: Path,
-        storage_adapter: Type["BaseStorageAdapter"],
+        storage_adapter: type["BaseStorageAdapter"],
         collection_options: Optional["BaseCollectionOptions"] = None,
     ) -> "BaseArrayAdapter":
         """Create ArrayAdapter instance.
@@ -54,30 +54,37 @@ class AdaptersFactory(BaseAdaptersFactory):
         :param collection_path: path to collection
         :param storage_adapter: storage adapter implementation
         :param collection_options: chunking and compression options
+        :returns: LocalArrayAdapter instance
         """
         return LocalArrayAdapter(collection_path, self.ctx, storage_adapter, self.executor, collection_options)
 
     @check_ctx_state
     def get_varray_adapter(
-        self, collection_path: Path, storage_adapter: Type["BaseStorageAdapter"]
+        self, collection_path: Path, storage_adapter: type["BaseStorageAdapter"]
     ) -> "BaseVArrayAdapter":
         """Create VArrayAdapter instance.
 
         :param collection_path: path to collection
         :param storage_adapter: storage adapter implementation
+        :returns: LocalVArrayAdapter instance
         """
         return LocalVArrayAdapter(collection_path, self.ctx, storage_adapter, self.executor)
 
     @check_ctx_state
     def get_collection_adapter(self) -> "BaseCollectionAdapter":
-        """Create collection adapter."""
+        """Create collection adapter.
+
+        :returns: LocalCollectionAdapter instance
+        """
         return LocalCollectionAdapter(self.ctx)
 
 
-def storage_adapter_factory(storage_adapter: Optional[str] = None) -> Type["BaseStorageAdapter"]:
+def storage_adapter_factory(storage_adapter: str | None = None) -> type["BaseStorageAdapter"]:
     """Return class of storage adapter based on the string input.
 
-    :param storage_adapter: string with storage adapter name.
+    :param storage_adapter: string with storage adapter name; ``HDF5StorageAdapter`` is the only one and the default
+    :returns: storage adapter class
+    :raises DekerStorageError: for any other name
     """
     # Currently we support only hdf5
     if storage_adapter and storage_adapter != StorageAdapterTypes.HDF5StorageAdapter.value:

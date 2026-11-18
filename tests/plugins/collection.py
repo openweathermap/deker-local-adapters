@@ -14,7 +14,7 @@ from deker.types import Scale
 from deker_local_adapters import HDF5Options
 
 
-@pytest.fixture()
+@pytest.fixture
 def array_collection(
     client: "Client",
     array_schema: "ArraySchema",
@@ -33,7 +33,7 @@ def array_collection(
     coll.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def array_collection_with_attributes(
     client: "Client",
     array_schema_with_attributes: "ArraySchema",
@@ -51,7 +51,7 @@ def array_collection_with_attributes(
     coll.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def varray_collection(
     client: "Client",
     varray_schema: "VArraySchema",
@@ -61,7 +61,7 @@ def varray_collection(
     coll.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def varray_collection_with_attributes(
     client: "Client",
     varray_schema_with_attributes: "VArraySchema",
@@ -71,13 +71,13 @@ def varray_collection_with_attributes(
     coll.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def collection_options() -> HDF5Options:
     """Creates an empty collection options object."""
     return HDF5Options()
 
 
-@pytest.fixture()
+@pytest.fixture
 def scaled_collection(client) -> Collection:
     """Creates collection with regular scale description."""
     schema = ArraySchema(
@@ -93,7 +93,7 @@ def scaled_collection(client) -> Collection:
     collection.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def scaled_varray_collection(client) -> Collection:
     """Creates collection with regular scale description."""
     schema = VArraySchema(
@@ -110,7 +110,7 @@ def scaled_varray_collection(client) -> Collection:
     collection.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def timed_collection(client) -> Collection:
     """Creates collection with regular scale description."""
     schema = ArraySchema(
@@ -126,7 +126,7 @@ def timed_collection(client) -> Collection:
     collection.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def timed_varray_collection(client) -> Collection:
     """Creates collection with regular scale description."""
     schema = VArraySchema(
