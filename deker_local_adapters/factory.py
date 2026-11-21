@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Optional
 from deker.ABC import BaseCollectionAdapter
 from deker.ABC.base_factory import BaseAdaptersFactory
 from deker.tools.decorators import check_ctx_state
+from deker_tools.typings import Sentinel, SentinelType, is_sentinel
 
 from deker_local_adapters.array_adapter import LocalArrayAdapter
 from deker_local_adapters.collection_adapter import LocalCollectionAdapter
@@ -79,15 +80,16 @@ class AdaptersFactory(BaseAdaptersFactory):
         return LocalCollectionAdapter(self.ctx)
 
 
-def storage_adapter_factory(storage_adapter: str | None = None) -> type["BaseStorageAdapter"]:
+def storage_adapter_factory(storage_adapter: str | SentinelType = Sentinel) -> type["BaseStorageAdapter"]:
     """Return class of storage adapter based on the string input.
 
     :param storage_adapter: string with storage adapter name; ``HDF5StorageAdapter`` is the only one and the default
+      when the name is not given
     :returns: storage adapter class
     :raises DekerStorageError: for any other name
     """
     # Currently we support only hdf5
-    if storage_adapter and storage_adapter != StorageAdapterTypes.HDF5StorageAdapter.value:
+    if not is_sentinel(storage_adapter) and storage_adapter != StorageAdapterTypes.HDF5StorageAdapter.value:
         raise DekerStorageError(f"There is no adapter for {storage_adapter}")
 
     return HDF5StorageAdapter

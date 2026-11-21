@@ -32,6 +32,21 @@ protocol changed, so every process working with one storage must be updated at o
 - `get_by_primary_attributes` and `get_id_by_primary_attributes` raise `DekerFilterError` unless the attributes
   are exactly the primary attributes of the schema: without them the search used to return the first file
   of the symlinks directory.
+- Every operation of the adapters that reads or changes data takes keyword-only `timeout` and `token`
+  (`deker` 2.0.0): `create`, `read_data`, `update`, `clear`, `delete` and `update_meta_custom_attributes`
+  of the array adapters, `delete_all_by_vid` of the VArray adapter, `create`, `clear` and `delete` of the
+  collection adapter.
+- `storage_adapter_factory(None)` raises `DekerStorageError`: leave the argument out to get the HDF5
+  adapter.
+
+### Added
+
+- Timeouts and cancellation of DEKER™ 2.0.0. The token is checked before an operation starts and, for a
+  read, once the storage has returned the data; a write closes the start flag of its token right before
+  its first change of a file, so a cancelled write changes nothing, and a started one goes to its end.
+  `delete_all_by_vid` checks the token before each Array. The wait for a lock is limited by the `timeout`
+  of the operation, or by `write_lock_timeout` of the client when it is not given; this includes the
+  lock of the symlink directory taken while an array with primary attributes is created.
 
 ### Changed
 

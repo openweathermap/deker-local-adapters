@@ -22,12 +22,15 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from cantok import AbstractToken
 from deker.ABC.base_adapters import BaseCollectionAdapter
 from deker.ctx import CTX
 from deker.errors import DekerCollectionAlreadyExistsError, DekerCollectionNotExistsError
 from deker.locks import CollectionLock
 from deker.tools import check_memory
 from deker.tools.decorators import check_ctx_state
+from deker_tools.cancel import check, mark_started
+from deker_tools.typings import SentinelType
 
 if TYPE_CHECKING:
     from deker.collection import Collection
@@ -51,7 +54,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
         self.file_ext = ".json"
         self.collections_resource.mkdir(parents=True, exist_ok=True)
 
-    def __create_path(self, name: str) -> Path | None:
+    def __create_path(self, name: str) -> Path:
         """Create Collection path in the file system.
 
         :param name: Collection name
@@ -65,33 +68,38 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
         except FileExistsError:
             raise DekerCollectionAlreadyExistsError(f"Collection {name} already exists")
 
-    def __create(self, coll_name: str, data: dict, coll_path: Path | None) -> None:
+    def __create(self, coll_name: str, data: dict, coll_path: Path) -> None:
         """Write the metadata file of the collection into its directory.
 
         :param coll_name: Collection name
         :param data: metadata of the collection
         :param coll_path: directory of the collection
         """
-        if coll_path and coll_path.exists():
+        if coll_path.exists():
             path = coll_path / (coll_name + self.file_ext)
             with open(path, mode="w") as f:
                 f.write(json.dumps(data))
 
     @check_ctx_state
     @CollectionLock()
-    def create(self, collection: "Collection") -> None:
+    def create(self, collection: "Collection", *, timeout: int | SentinelType, token: AbstractToken) -> None:
         """Add collection to the storage and create file structure, holding the collection lock.
 
         :param collection: Collection to be created
+        :param timeout: seconds to wait for the lock of the collection as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         :raises DekerMemoryError: if one array of the collection would not fit the memory limit, unless the
           check is skipped by the client
         :raises DekerCollectionAlreadyExistsError: if a collection of the name exists
         """
+        check(token)
         try:
             schema = collection.array_schema
             shape = schema.arrays_shape if hasattr(schema, "arrays_shape") else schema.shape
             if not self.ctx.config.skip_collection_create_memory_check:
                 check_memory(shape, schema.dtype, self.ctx.config.memory_limit)
+            mark_started(token)
             coll_path = self.__create_path(collection.name)
             prepared = collection.as_dict
             self.__create(coll_name=collection.name, data=prepared, coll_path=coll_path)
@@ -116,13 +124,18 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
         raise DekerCollectionNotExistsError(f"{name} collection doesn't exist")
 
     @check_ctx_state
-    def delete(self, collection: "Collection") -> None:
+    def delete(self, collection: "Collection", *, timeout: int | SentinelType, token: AbstractToken) -> None:
         """Delete the directory of the collection with everything in it, and its lock file.
 
-        A directory that is gone already is not an error; any other failure to remove it is raised.
+        A directory that is gone already is not an error; any other failure to remove it is raised. The deletion
+        takes no lock: the timeout is not used.
 
         :param collection: Collection to delete
+        :param timeout: not used
+        :param token: token of the write operation
         """
+        check(token)
+        mark_started(token)
         try:
             try:
                 shutil.rmtree(self.collections_resource / collection.name)
@@ -135,11 +148,16 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
 
     @check_ctx_state
     @CollectionLock()
-    def clear(self, collection: "Collection") -> None:
+    def clear(self, collection: "Collection", *, timeout: int | SentinelType, token: AbstractToken) -> None:
         """Remove everything from the directory of the collection but its metadata file, holding the collection lock.
 
         :param collection: Collection to be cleared
+        :param timeout: seconds to wait for the lock of the collection as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         """
+        check(token)
+        mark_started(token)
         try:
             for root, dirs, files in os.walk(self.collections_resource / collection.name):
                 for f in files:

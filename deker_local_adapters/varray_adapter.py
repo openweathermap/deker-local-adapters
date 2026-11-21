@@ -20,6 +20,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from cantok import AbstractToken
 from deker.ABC import BaseStorageAdapter
 from deker.ABC.base_adapters import BaseVArrayAdapter
 from deker.arrays import VArray
@@ -28,6 +29,8 @@ from deker.errors import DekerArrayError
 from deker.locks import UpdateMetaAttributeLock
 from deker.tools.decorators import check_ctx_state
 from deker.types import ArrayMeta, Data, Numeric, Slice
+from deker_tools.cancel import check, mark_started
+from deker_tools.typings import SentinelType
 from numpy import ndarray
 
 from deker_local_adapters.mixin import LocalAdapterMixin
@@ -63,47 +66,62 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
         super().__init__(collection_path, ctx, executor, storage_adapter)
 
     @check_ctx_state
-    def read_data(self, array: "VArray", bounds: Slice) -> Numeric | ndarray:
+    def read_data(
+        self, array: "VArray", bounds: Slice, *, timeout: int | SentinelType, token: AbstractToken
+    ) -> Numeric | ndarray:
         """Not implemented: a VArray holds no data, a VSubset reads its Arrays.
 
         :param array: VArray instance
         :param bounds: bounds to read
+        :param timeout: timeout of the read
+        :param token: token of the read
         :returns: nothing, the call never returns
         :raises NotImplementedError: always
         """
         raise NotImplementedError
 
     @check_ctx_state
-    def update(self, array: "VArray", bounds: Slice, data: Data) -> None:
+    def update(
+        self, array: "VArray", bounds: Slice, data: Data, *, timeout: int | SentinelType, token: AbstractToken
+    ) -> None:
         """Not implemented: a VArray holds no data, a VSubset writes its Arrays.
 
         :param array: VArray instance
         :param bounds: bounds to update
         :param data: new data
+        :param timeout: timeout of the write
+        :param token: token of the write
         :raises NotImplementedError: always
         """
         raise NotImplementedError
 
     @check_ctx_state
-    def clear(self, array: "VArray", bounds: Slice) -> None:
+    def clear(self, array: "VArray", bounds: Slice, *, timeout: int | SentinelType, token: AbstractToken) -> None:
         """Not implemented: a VArray holds no data, a VSubset clears its Arrays.
 
         :param array: VArray instance
         :param bounds: bounds to clear
+        :param timeout: timeout of the write
+        :param token: token of the write
         :raises NotImplementedError: always
         """
         raise NotImplementedError
 
     @check_ctx_state
-    def create(self, array: VArray) -> VArray:
+    def create(self, array: VArray, *, timeout: int | SentinelType, token: AbstractToken) -> VArray:
         """Create a new virtual array on disk storage.
 
         :param array: VArray instance
+        :param timeout: seconds to wait for the symlink directory of the primary attributes, as the call gave them;
+          ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         :returns: the same instance, once its files are created
         :raises DekerArrayError: if the varray file already exists
         :raises DekerValidationError: if a varray with the same primary attributes exists
         """
-        return self._create_on_disk(array)
+        check(token)
+        return self._create_on_disk(array, timeout=timeout, token=token)
 
     def _create_main_file(self, array: VArray, main_filename: Path) -> None:
         """Create the json file of a VArray with its metadata.
@@ -134,7 +152,9 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
 
     @check_ctx_state
     @UpdateMetaAttributeLock()
-    def update_meta_custom_attributes(self, array: VArray, attributes: dict) -> None:
+    def update_meta_custom_attributes(
+        self, array: VArray, attributes: dict, *, timeout: int | SentinelType, token: AbstractToken
+    ) -> None:
         """Replace the custom attributes in the json file of the VArray, holding it exclusively, and in the object.
 
         The new metadata is written to a temporary file next to the json file and moved over it in one step,
@@ -142,10 +162,15 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
 
         :param array: VArray instance
         :param attributes: new custom attributes
+        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         :raises DekerLockError: if the file is held by another writer
         """
+        check(token)
         filename = self._get_main_path_to_file(array)
         temporary = filename.with_name(filename.name + ".tmp")
+        mark_started(token)
         try:
             with open(filename, encoding="utf-8") as f:
                 meta = json.loads(f.read())

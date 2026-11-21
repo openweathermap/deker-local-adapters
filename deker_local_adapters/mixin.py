@@ -22,17 +22,20 @@ from collections.abc import Generator
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, cast
 
+from cantok import AbstractToken
 from deker.ABC.base_adapters import IArrayAdapter
+from deker.ABC.base_locks import wait_for_unlock
 from deker.arrays import Array, VArray
 from deker.errors import DekerArrayError, DekerLockError, DekerValidationError
 from deker.flock import Flock
-from deker.locks import wait_for_unlock
 from deker.log import SelfLoggerMixin
 from deker.tools import get_main_path, get_paths, get_symlink_path
 from deker.tools.decorators import check_ctx_state
 from deker.types import ArrayMeta
 from deker.types.private.typings import ArrayT
+from deker_tools.cancel import check, mark_started, resolve_timeout
 from deker_tools.path import is_empty
+from deker_tools.typings import SentinelType
 
 from deker_local_adapters.errors import DekerBrokenSymlinkError
 
@@ -109,11 +112,16 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
             self._remove_empty_parents(file)
 
     @check_ctx_state
-    def delete(self, array: ArrayT) -> None:
+    def delete(self, array: ArrayT, *, timeout: int | SentinelType, token: AbstractToken) -> None:
         """Delete the files of the array.
 
         :param array: array instance
+        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         """
+        check(token)
+        mark_started(token)
         try:
             paths = get_paths(array, self.collection_path)
             filename = array.id + self.file_ext
@@ -183,7 +191,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
             return False
         return True
 
-    def _lock_symlink_directory(self, directory: Path) -> Flock:
+    def _lock_symlink_directory(self, directory: Path, *, timeout: int | SentinelType, token: AbstractToken) -> Flock:
         """Take the symlink directory of some primary attributes exclusively.
 
         One creator of a (V)Array with these primary attributes at a time: the next one waits here and then
@@ -191,12 +199,18 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         and containers on one storage, dies with its holder and leaves no file behind.
 
         :param directory: symlink directory of the primary attributes
+        :param timeout: seconds to wait for the directory; ``Sentinel`` - ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         :returns: the held flock, to be released by the caller
-        :raises DekerLockError: if the directory is not released within ``write_lock_timeout``
+        :raises DekerLockError: if the directory is not released within the timeout
         """
         flock = Flock(directory)
         if not wait_for_unlock(
-            self._try_lock, (flock,), self.ctx.config.write_lock_timeout, self.SYMLINK_DIRECTORY_LOCK_INTERVAL
+            self._try_lock,
+            (flock,),
+            timeout=resolve_timeout(timeout, self.ctx.config.write_lock_timeout),
+            interval=self.SYMLINK_DIRECTORY_LOCK_INTERVAL,
+            token=token,
         ):
             raise DekerLockError(f"Directory {directory} is locked for the creation of an array")
         return flock
@@ -225,21 +239,25 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
             raise DekerArrayError(f"File {main_filename.resolve()} already exists")
         os.symlink(main_filename, sym_filename)
 
-    def _create_on_disk(self, array: ArrayT) -> ArrayT:
+    def _create_on_disk(self, array: ArrayT, *, timeout: int | SentinelType, token: AbstractToken) -> ArrayT:
         """Create the files of a (V)Array, holding the symlink directory of its primary attributes meanwhile.
 
         :param array: Array or VArray
+        :param timeout: seconds to wait for the symlink directory; ``Sentinel`` - ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         :returns: the same instance, once its files are created
         :raises DekerValidationError: if a (V)Array with the same primary attributes exists
         :raises DekerArrayError: if the main file already exists
         """
         main_filename, sym_filename = self.get_filenames_for_create_methods(array)
         if not array.primary_attributes:
+            mark_started(token)
             self._create_files(array, main_filename, sym_filename)
             return array
-        directory_lock = self._lock_symlink_directory(sym_filename.parent)
+        directory_lock = self._lock_symlink_directory(sym_filename.parent, timeout=timeout, token=token)
         try:
             self.check_symlink_existence(sym_filename)
+            mark_started(token)
             self._create_files(array, main_filename, sym_filename)
         finally:
             directory_lock.release()

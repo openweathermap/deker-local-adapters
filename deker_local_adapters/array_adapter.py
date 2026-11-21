@@ -17,9 +17,11 @@
 import os
 
 from collections.abc import Generator
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
+from cantok import AbstractToken
 from deker.ABC.base_adapters import BaseArrayAdapter
 from deker.arrays import Array
 from deker.ctx import CTX
@@ -29,6 +31,8 @@ from deker.schemas import AttributeSchema
 from deker.tools import get_main_path, get_symlink_path
 from deker.tools.decorators import check_ctx_state
 from deker.types import ArrayMeta, Data, Numeric, Slice
+from deker_tools.cancel import check, mark_started
+from deker_tools.typings import SentinelType
 from numpy import ndarray
 
 from deker_local_adapters.mixin import LocalAdapterMixin
@@ -100,20 +104,25 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
             return None
 
     @check_ctx_state
-    def create(self, array: Array) -> Array:
+    def create(self, array: Array, *, timeout: int | SentinelType, token: AbstractToken) -> Array:
         """Create a new array on disk storage.
 
         :param array: Array instance
+        :param timeout: seconds to wait for the symlink directory of the primary attributes, as the call gave them;
+          ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         :returns: the same instance, once its files are created
         :raises DekerArrayError: if the array file already exists or its VArray does not exist
         :raises DekerValidationError: if an array with the same primary attributes exists
         """
+        check(token)
         # If the array is part of a varray, check that such varray exists
         if array._vid:
             varray_path = get_main_path(array._vid, Path(self.ctx.config.varray_data_directory))
             if not (self.collection_path / varray_path).exists():
                 raise DekerArrayError(f"VArray with id={array._vid} doesn't exist")
-        return self._create_on_disk(array)
+        return self._create_on_disk(array, timeout=timeout, token=token)
 
     def _create_main_file(self, array: Array, main_filename: Path) -> None:
         """Create the hdf5 file of an Array with its metadata.
@@ -126,17 +135,25 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
 
     @check_ctx_state
     @ReadArrayLock()
-    def read_data(self, array: Array, bounds: Slice) -> Numeric | ndarray:
+    def read_data(
+        self, array: Array, bounds: Slice, *, timeout: int | SentinelType, token: AbstractToken
+    ) -> Numeric | ndarray:
         """Read data from the existing array, holding its file shared.
+
+        The data read are not returned if the read was cancelled while the file was read.
 
         :param array: Array instance
         :param bounds: array bounds to read
+        :param timeout: seconds of the read as the call gave them
+        :param token: token of the read operation
         :returns: data within the bounds; a scalar for a single cell
         :raises DekerLockError: if a writer holds the file
         """
+        check(token)
         filename = self._get_main_path_to_file(array)
-
-        return self.storage_adapter.read_data(filename, array.shape, bounds, array.fill_value, array.dtype)
+        data = self.storage_adapter.read_data(filename, array.shape, bounds, array.fill_value, array.dtype)
+        check(token)
+        return data
 
     @check_ctx_state
     @ReadArrayLock()
@@ -153,43 +170,58 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         return result
 
     @WriteArrayLock()
-    def _delete_held(self, array: Array) -> None:
+    def _delete_held(self, array: Array, *, timeout: int | SentinelType, token: AbstractToken) -> None:
         """Delete the array holding its file exclusively.
 
         :param array: Array instance
+        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         """
-        super().delete(array)
+        super().delete(array, timeout=timeout, token=token)
 
     @check_ctx_state
-    def delete(self, array: Array) -> None:
+    def delete(self, array: Array, *, timeout: int | SentinelType, token: AbstractToken) -> None:
         """Delete the array, waiting for the readers and writers of its file to leave.
 
         :param array: Array instance
-        :raises DekerLockError: if the file is still held when the write lock timeout is over
+        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
+        :raises DekerLockError: if the file is still held when the timeout is over
         """
+        check(token)
         if self._get_main_path_to_file(array).exists():
-            self._delete_held(array)
+            self._delete_held(array, timeout=timeout, token=token)
         else:
-            super().delete(array)  # the main file is gone already: the symlink is removed anyway
+            # the main file is gone already: the symlink is removed anyway
+            super().delete(array, timeout=timeout, token=token)
 
     @check_ctx_state
     @WriteArrayLock()
-    def update(self, array: Array, bounds: Slice, data: Data) -> None:
+    def update(
+        self, array: Array, bounds: Slice, data: Data, *, timeout: int | SentinelType, token: AbstractToken
+    ) -> None:
         """Update data in the existing array, holding its file exclusively.
 
         :param array: Array instance
         :param bounds: array bounds to be updated
         :param data: new data of the shape of the bounds, or a number that fills them
+        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         :raises DekerArrayError: if the data is ``None``
         :raises DekerArrayTypeError: if the data does not fit the dtype of the array
         :raises IndexError: if the data does not fit the shape of the bounds
         :raises DekerLockError: if the file is not released within the write lock timeout
         """
+        check(token)
         filename = self._get_main_path_to_file(array)
 
         if data is None:
             raise DekerArrayError("Updating data shall not be None")
         data = self._process_data(array.dtype, array.shape, data, bounds)
+        mark_started(token)
         self.storage_adapter.update_data(
             filename,
             bounds,
@@ -202,15 +234,22 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
 
     @check_ctx_state
     @WriteArrayLock()
-    def update_meta_custom_attributes(self, array: Array, attributes: dict) -> None:
+    def update_meta_custom_attributes(
+        self, array: Array, attributes: dict, *, timeout: int | SentinelType, token: AbstractToken
+    ) -> None:
         """Replace the custom attributes in the file of the array, holding it exclusively, and in the object.
 
         :param array: Array instance
         :param attributes: new custom attributes
+        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         :raises DekerLockError: if the file is not released within the write lock timeout
         """
+        check(token)
         filename = self._get_main_path_to_file(array)
 
+        mark_started(token)
         try:
             array.custom_attributes = self.storage_adapter.update_meta_custom_attributes(
                 filename,
@@ -222,14 +261,19 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
 
     @check_ctx_state
     @WriteArrayLock()
-    def clear(self, array: Array, bounds: Slice) -> None:
+    def clear(self, array: Array, bounds: Slice, *, timeout: int | SentinelType, token: AbstractToken) -> None:
         """Set the cells within the bounds to the fill value, holding the file exclusively.
 
         :param array: Array instance
         :param bounds: array bounds to clear
+        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         :raises DekerLockError: if the file is not released within the write lock timeout
         """
+        check(token)
         filename = self._get_main_path_to_file(array)
+        mark_started(token)
         self.storage_adapter.clear_data(
             filename,
             array.shape,
@@ -252,16 +296,25 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
                     yield symlink
 
     @check_ctx_state
-    def delete_all_by_vid(self, vid: str, collection: "Collection") -> None:
+    def delete_all_by_vid(
+        self, vid: str, collection: "Collection", *, timeout: int | SentinelType, token: AbstractToken
+    ) -> None:
         """Delete all the Arrays of a VArray, each waiting for its readers and writers.
+
+        Once one Array is started, every Array is deleted whatever happens to the token: the deletion of a VArray
+        is cancelled only before any of its files is touched.
 
         :param vid: VArray id
         :param collection: collection instance
+        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
         """
+        check(token)
         try:
             metas = self.executor.map(self.read_meta, self._adapter_iter(vid))
             arrays = [Array._create_from_meta(collection, meta, self) for meta in metas]
-            list(self.executor.map(self.delete, arrays))
+            list(self.executor.map(partial(self.delete, timeout=timeout, token=token), arrays))
         except Exception as e:
             self.logger.exception(e)
             raise e

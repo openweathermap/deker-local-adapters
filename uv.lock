@@ -195,6 +195,19 @@ filecache = [
 ]
 
 [[package]]
+name = "cantok"
+version = "0.0.43"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "printo" },
+    { name = "typing-extensions", marker = "python_full_version < '3.13'" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ac/67/d7ca148e312ca5b624d3caf7185a8f7760a694e1c9597b2850f5dd635392/cantok-0.0.43.tar.gz", hash = "sha256:e40e16b4bfcbd5dcbdc036cac16ff64bb753a89b378837ec8a8b7ca90bc953d9", size = 11374, upload-time = "2026-07-20T22:39:24.296Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/57/ce/b7287569531994f3e1513b72c583dbd4db97bcec63c63183c8d3393049c9/cantok-0.0.43-py3-none-any.whl", hash = "sha256:8f5288fce95acc1c359264fbde27146e91f08c599bf700884b7c4f35c9328c28", size = 13445, upload-time = "2026-07-20T22:39:22.986Z" },
+]
+
+[[package]]
 name = "certifi"
 version = "2026.10.23"
 source = { registry = "https://pypi.org/simple" }
@@ -801,13 +814,17 @@ docs = [
 name = "deker-tools"
 source = { editable = "../deker-tools" }
 dependencies = [
+    { name = "cantok" },
     { name = "numpy", version = "2.2.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.11'" },
     { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "numpy", version = "2.5.5", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
 
 [package.metadata]
-requires-dist = [{ name = "numpy", specifier = ">=1.26,<3" }]
+requires-dist = [
+    { name = "cantok", specifier = ">=0.0.43,<1" },
+    { name = "numpy", specifier = ">=1.26,<3" },
+]
 
 [package.metadata.requires-dev]
 dev = [
@@ -822,6 +839,7 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.17.0" },
     { name = "pytest-random-order", specifier = ">=1.2.0" },
     { name = "pytest-sugar", specifier = ">=1.1.1" },
+    { name = "pytest-timeout", specifier = ">=2.4.0" },
     { name = "pyupgrade", specifier = ">=3.19.0" },
     { name = "ruff", specifier = ">=0.17.2" },
     { name = "ssort", specifier = ">=0.17.0" },
@@ -847,6 +865,15 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/83/ae/242596e550f79aa85ab6b5310caadd0b592063dc0c20c397d25707981f65/dict2css-0.6.0.tar.gz", hash = "sha256:143e55cb71c98a88c79f2c41e08a5fa4d875659275756f794e31ccd69936ce88", size = 9268, upload-time = "2026-05-21T08:34:29.598Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f7/68/0fbc6124cdd4f5a92599d18345bd24c67977988d0bb277f3ea284321d836/dict2css-0.6.0-py3-none-any.whl", hash = "sha256:5251f1df1c78ffdf09313657a7f88add0ad219127d9aeb18fb343b052d6bfbbe", size = 11874, upload-time = "2026-05-21T08:34:28.548Z" },
+]
+
+[[package]]
+name = "dill"
+version = "0.4.0"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/12/80/630b4b88364e9a8c8c5797f4602d0f76ef820909ee32f0bacb9f90654042/dill-0.4.0.tar.gz", hash = "sha256:0633f1d2df477324f53a895b02c901fb961bdbf65a17122586ea7019292cbcf0", size = 186976, upload-time = "2025-04-16T00:41:48.867Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/50/3d/9373ad9c56321fdab5b41197068e1d8c25883b3fea29dd361f9b55116869/dill-0.4.0-py3-none-any.whl", hash = "sha256:44f54bf6412c2c8464c14e8243eb163690a9800dbe2c367330883b19c7561049", size = 119668, upload-time = "2025-04-16T00:41:47.671Z" },
 ]
 
 [[package]]
@@ -957,6 +984,18 @@ resolution-markers = [
 sdist = { url = "https://files.pythonhosted.org/packages/bf/9d/7ec738e68764703d07eb4da4b43aabf0ae6f969f34cb3792a88af400abc5/filelock-4.2.11.tar.gz", hash = "sha256:0cb84119fb8dce17898e1f69c974d5019daa59c4d7656be390a5fa59ccced912", size = 680235, upload-time = "2026-11-17T06:35:26.056Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/ed/50/efc158a54b0046104b546f24b28ca1bf25b72969adb960032252a1687a96/filelock-4.2.11-py3-none-any.whl", hash = "sha256:020e229e4bb9d410fc799c07ddf45fa217cba970278f40b30751d94f309b69e2", size = 222003, upload-time = "2026-11-17T06:35:24.668Z" },
+]
+
+[[package]]
+name = "getsources"
+version = "0.0.4"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "dill" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/87/50/3ed4c6bf00145362383ef63e4906dfae5be1992a4dc2b2948a19af533763/getsources-0.0.4.tar.gz", hash = "sha256:e37f7cf3ba17d158f0ac17b9386495d12cb34f5006fe1aba82a4ffc54550eca1", size = 11383, upload-time = "2026-03-30T14:33:04.676Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d8/dd/4802aa3d51d70d5893e8343caa8e60390000bcae9fee58a32ffe1a7c4365/getsources-0.0.4-py3-none-any.whl", hash = "sha256:fe5b728300bff0d0a66ace457de2075618b7581282383912157829daf88dbe56", size = 7805, upload-time = "2026-03-30T14:33:03.674Z" },
 ]
 
 [[package]]
@@ -1932,6 +1971,19 @@ wheels = [
 ]
 
 [[package]]
+name = "printo"
+version = "0.0.29"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "getsources" },
+    { name = "sigmatch" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/a3/9b/93bbcb7b7d5634000a71822a5054a7e3e931cba8a09e0f2940c7d265dca3/printo-0.0.29.tar.gz", hash = "sha256:1bb753eb0ebc0047d70022ba61f9570ce04cd54297bf5328b95f7cdeb3772660", size = 14858, upload-time = "2026-07-01T14:04:18.304Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/d1/75/9aae77ad6b5cf075e34de31cb78d6db9319ee2c2d32b21cd5ecfa5d8a1dc/printo-0.0.29-py3-none-any.whl", hash = "sha256:2cce3634446806ea063adc38ff16855b58c653bd589b33eea9d30cef07a131c4", size = 12250, upload-time = "2026-07-01T14:04:17.003Z" },
+]
+
+[[package]]
 name = "psutil"
 version = "7.2.2"
 source = { registry = "https://pypi.org/simple" }
@@ -2265,6 +2317,18 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/2c/a5/2e136dede2a88aaaf54498bbbdc81bc810f788ef6ef01efb97037d73cd1d/ruff-0.17.5-py3-none-win32.whl", hash = "sha256:e1546609b2ad73f1d6c5c076881b788672b7b3cc3283981182cbdbb6524ed88a", size = 9929908, upload-time = "2026-11-12T17:54:47.067Z" },
     { url = "https://files.pythonhosted.org/packages/ec/8c/e4db9ae1e0ee233c04df007ab6d0d42f799ae9abd95d352b6092ee7bc4bf/ruff-0.17.5-py3-none-win_amd64.whl", hash = "sha256:aa415d57c244299279901d776607fee3df7831c2a7435433fbfacde8632c6550", size = 10275454, upload-time = "2026-11-12T17:54:49.401Z" },
     { url = "https://files.pythonhosted.org/packages/e6/65/a1648bc1550e7683bf7bf1e2ce2485c9f8535cbca6cca9ec7b73cc12fb8e/ruff-0.17.5-py3-none-win_arm64.whl", hash = "sha256:64a6fd668a336df959c522991de33e9e3c8be463afc0c9ac8f029f9d19ef756e", size = 9849020, upload-time = "2026-11-12T17:54:52.055Z" },
+]
+
+[[package]]
+name = "sigmatch"
+version = "0.0.10"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "printo" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/d7/8b/e974978e19e05e78a1926cf776dfca188b599354f8276be91bb6002f6a93/sigmatch-0.0.10.tar.gz", hash = "sha256:ac1e3233cedf19bdfb6e4c42a032b3a381b48c46f597fc1ab613512f75ffb03c", size = 12965, upload-time = "2026-04-21T18:40:57.984Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/25/67/a583292179b52cb70dcdb871e033793d98cae5b0d45b0457bc000b6332a7/sigmatch-0.0.10-py3-none-any.whl", hash = "sha256:849dadb7c60b1dbab5396331fb27b4b11bb498483def23427358f31d60a8f9b2", size = 10995, upload-time = "2026-04-21T18:40:56.42Z" },
 ]
 
 [[package]]
