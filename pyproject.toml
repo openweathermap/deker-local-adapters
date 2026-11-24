@@ -36,7 +36,7 @@ dependencies = [
     "numpy>=1.26,<3",
     "h5py>=3.11,<4",
     "hdf5plugin>=4.0.1,<8",
-    "deker-tools>=2.0.0b0,<3",
+    "deker-tools>=2.0.0b1,<3",
 ]
 
 [project.urls]
@@ -94,7 +94,7 @@ dev = [
     "pytest-random-order>=1.2.0",
     "pytest-mock>=3.17.0",
     "pytest-timeout>=2.4.0",
-    "deker>=2.0.0b0,<3",
+    "deker>=2.0.0b1,<3",
 ]
 docs = [
     "docutils>=0.21.2",
