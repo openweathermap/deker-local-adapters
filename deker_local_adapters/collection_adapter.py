@@ -193,7 +193,8 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
 
         :yields: the metadata of every collection
         """
-        for directory in os.scandir(self.collections_resource):
-            if os.path.isdir(directory):
-                meta = self.read(directory.name)
-                yield meta
+        with os.scandir(self.collections_resource) as directories:
+            for directory in directories:
+                if os.path.isdir(directory):
+                    meta = self.read(directory.name)
+                    yield meta

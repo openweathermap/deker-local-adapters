@@ -1,4 +1,6 @@
 import errno
+import gc
+import json
 import os
 import shutil
 import time
@@ -28,6 +30,17 @@ from tests.parameters.common import random_string
 
 from deker_local_adapters import AdaptersFactory, LocalCollectionAdapter
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
+
+
+def fill_collections_directory(path: Path, names: tuple[str, ...]) -> None:
+    """Make a collection directory with its metadata file for every name.
+
+    :param path: the collections directory
+    :param names: names of the collections
+    """
+    for name in names:
+        (path / name).mkdir()
+        (path / name / f"{name}.json").write_text(json.dumps({"name": name}))
 
 
 @pytest.mark.asyncio
@@ -376,3 +389,45 @@ class TestCollectionAdapterCancellation:
                 collection_adapter.clear(array_collection, timeout=1, token=DefaultToken())
             assert time.monotonic() - start < 2.5
         assert [a.id for a in array_collection] == [array.id]
+
+
+class TestCollectionAdapterIterClosesTheDirectory:
+    """The iteration over the collections leaves no unclosed scandir iterator, however it ends.
+
+    An unclosed iterator warns with ResourceWarning when it is collected; pytest turns it into an error.
+    """
+
+    @pytest.fixture
+    def collections_path(self, tmp_path: Path, mocker: MockerFixture) -> Path:
+        """Point the collections directory of every collection adapter to an empty directory of the test.
+
+        :param tmp_path: directory of the test
+        :param mocker: mocker fixture
+        """
+        mocker.patch.object(LocalCollectionAdapter, "collections_resource", tmp_path)
+        return tmp_path
+
+    def test_full_iteration(self, collections_path: Path, collection_adapter: LocalCollectionAdapter):
+        fill_collections_directory(collections_path, ("first", "second"))
+        (collections_path / "first.lock").write_text("")
+        assert sorted(meta["name"] for meta in collection_adapter) == ["first", "second"]
+        gc.collect()
+
+    def test_iteration_stopped_at_the_first_collection(
+        self, collections_path: Path, collection_adapter: LocalCollectionAdapter
+    ):
+        fill_collections_directory(collections_path, ("first", "second"))
+        iterator = iter(collection_adapter)
+        assert next(iterator)["name"] in {"first", "second"}
+        del iterator
+        gc.collect()
+
+    def test_iteration_of_an_empty_directory(self, collections_path: Path, collection_adapter: LocalCollectionAdapter):
+        assert list(collection_adapter) == []
+        gc.collect()
+
+    def test_iteration_stopped_by_an_error(self, collections_path: Path, collection_adapter: LocalCollectionAdapter):
+        (collections_path / "broken").mkdir()
+        with pytest.raises(DekerCollectionNotExistsError, match="broken collection doesn't exist"):
+            list(collection_adapter)
+        gc.collect()
