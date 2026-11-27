@@ -73,7 +73,8 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
 
         :param array: VArray instance
         :param bounds: bounds to read
-        :param timeout: timeout of the read
+        :param timeout: timeout of the read; taken for the common signature of the adapters and not used: the
+          method only raises
         :param token: token of the read
         :returns: nothing, the call never returns
         :raises NotImplementedError: always
@@ -89,7 +90,8 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
         :param array: VArray instance
         :param bounds: bounds to update
         :param data: new data
-        :param timeout: timeout of the write
+        :param timeout: timeout of the write; taken for the common signature of the adapters and not used: the
+          method only raises
         :param token: token of the write
         :raises NotImplementedError: always
         """
@@ -101,7 +103,8 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
 
         :param array: VArray instance
         :param bounds: bounds to clear
-        :param timeout: timeout of the write
+        :param timeout: timeout of the write; taken for the common signature of the adapters and not used: the
+          method only raises
         :param token: token of the write
         :raises NotImplementedError: always
         """
@@ -161,14 +164,16 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
         """Replace the custom attributes in the json file of the VArray, holding it exclusively, and in the object.
 
         The new metadata is written to a temporary file next to the json file and moved over it in one step,
-        so a reader never meets a half-written file.
+        so a reader never meets a half-written file. The lock is on the file, not on its directory: the update
+        does not wait for the creation of the Arrays of the VArray.
 
         :param array: VArray instance
         :param attributes: new custom attributes
         :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client
+          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``UpdateMetaAttributeLock``),
+          not by its body: the lock waits for the file no longer than that
         :param token: token of the write operation
-        :raises DekerLockError: if the file is held by another writer
+        :raises DekerLockError: if the file is not released within the write lock timeout
         :raises DekerInstanceNotExistsError: if the file or its directory is gone
         """
         check(token)
@@ -187,8 +192,9 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
                 with open(temporary, "w", encoding="utf-8") as f:
                     f.write(json_meta)
                 os.replace(temporary, filename)
-            finally:
+            except BaseException:
                 temporary.unlink(missing_ok=True)
+                raise
             array.custom_attributes = attributes
         except Exception as e:
             self.logger.exception(e)

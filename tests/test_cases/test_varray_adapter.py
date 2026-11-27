@@ -1,8 +1,10 @@
 import json
 import os
+import threading
 
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest import mock
 
 import numpy as np
 import pytest
@@ -18,6 +20,58 @@ from deker_tools.typings import Sentinel
 
 from deker_local_adapters import LocalVArrayAdapter
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
+
+
+class PausedAfterReplace:
+    """Stands in for ``os.replace``: the first writer pauses after its replace, the second one before its own.
+
+    The first writer goes on once the second one is at its replace; the second one replaces once the first one has
+    left the update. Every wait is bounded, so a broken order fails instead of hanging.
+    """
+
+    def __init__(self, first: threading.Thread):
+        self.first = first
+        self.real = os.replace
+        self.first_replaced = threading.Event()
+        self.second_at_replace = threading.Event()
+        self.first_done = threading.Event()
+
+    def __call__(self, source, target) -> None:
+        if threading.current_thread() is self.first:
+            self.real(source, target)
+            self.first_replaced.set()
+            self.second_at_replace.wait(10)
+            return
+        self.second_at_replace.set()
+        self.first_done.wait(10)
+        self.real(source, target)
+
+
+class MovedAwayOnCall:
+    """Stands in for a method of the adapter that returns the path of the json file: moves the file away first."""
+
+    def __init__(self, original, target: Path):
+        self.original = original
+        self.target = target
+
+    def __call__(self, array: VArray) -> Path:
+        path = self.original(array)
+        path.rename(self.target)
+        return path
+
+
+class FailingWriteOpen:
+    """Stands in for ``open`` of the VArray adapter: a file opened for writing is created, then the write fails."""
+
+    def __init__(self):
+        self.real = open
+
+    def __call__(self, file, mode="r", *args, **kwargs):
+        f = self.real(file, mode, *args, **kwargs)
+        if "w" in mode:
+            f.close()
+            raise OSError("disk is full")
+        return f
 
 
 class TestVArrayAdapterMethods:
@@ -178,22 +232,76 @@ class TestVArrayAdapterMethods:
         assert not Path(source).exists()
         assert adapter.read_meta(varray_with_attributes)["custom_attributes"]["custom_attribute"] == 0.7
 
+    @pytest.mark.parametrize("failing", ["write", "replace"])
     def test_varray_adapter_update_custom_attributes_keeps_the_file_when_the_write_fails(
-        self, varray_with_attributes: VArray, mocker
+        self, varray_with_attributes: VArray, mocker, failing: str
     ):
         """A failed update leaves the old metadata readable and no temporary file behind."""
         adapter: LocalVArrayAdapter = varray_with_attributes._adapter
         adapter.create(varray_with_attributes, timeout=Sentinel, token=DefaultToken())
         before = adapter.read_meta(varray_with_attributes)
+        attributes = dict(varray_with_attributes.custom_attributes)
         main = get_paths(varray_with_attributes, varray_with_attributes._VArray__collection.path).main / (
             varray_with_attributes.id + adapter.file_ext
         )
-        mocker.patch.object(os, "replace", side_effect=OSError("disk is full"))
-        with pytest.raises(OSError, match="disk is full"):
+        if failing == "write":
+            mocker.patch("deker_local_adapters.varray_adapter.open", FailingWriteOpen(), create=True)
+        else:
+            mocker.patch.object(os, "replace", side_effect=OSError("disk is full"))
+        with pytest.raises(OSError) as error:
             adapter.update_meta_custom_attributes(
                 varray_with_attributes, {"custom_attribute": 0.7}, timeout=Sentinel, token=DefaultToken()
             )
+        assert type(error.value) is OSError
+        assert str(error.value) == "disk is full"
         assert adapter.read_meta(varray_with_attributes) == before
+        assert varray_with_attributes.custom_attributes == attributes
+        assert [path.name for path in main.parent.iterdir()] == [main.name]
+
+    @pytest.mark.timeout(30)
+    def test_varray_adapter_update_custom_attributes_leaves_the_temporary_file_of_the_next_writer(
+        self, varray_with_attributes: VArray
+    ):
+        """Once the first writer has replaced the json file, the next one locks the new file and writes.
+
+        The first writer is still in the update meanwhile; it must not touch the temporary file of the next one.
+        """
+        adapter: LocalVArrayAdapter = varray_with_attributes._adapter
+        adapter.create(varray_with_attributes, timeout=Sentinel, token=DefaultToken())
+        second = VArray._create_from_meta(
+            varray_with_attributes._VArray__collection,
+            adapter.read_meta(varray_with_attributes),
+            varray_adapter=adapter,
+            array_adapter=varray_with_attributes._VArray__array_adapter,
+        )
+        main = adapter._get_main_path_to_file(varray_with_attributes)
+        errors: list[BaseException] = []
+
+        def update_first() -> None:
+            try:
+                adapter.update_meta_custom_attributes(
+                    varray_with_attributes, {"custom_attribute": 0.1}, timeout=Sentinel, token=DefaultToken()
+                )
+            except BaseException as e:  # noqa: BLE001  # reported by the assertion below
+                errors.append(e)
+            finally:
+                probe.first_done.set()
+
+        first = threading.Thread(target=update_first)
+        probe = PausedAfterReplace(first)
+        with mock.patch.object(os, "replace", probe):
+            first.start()
+            try:
+                assert probe.first_replaced.wait(10)
+                adapter.update_meta_custom_attributes(
+                    second, {"custom_attribute": 0.2}, timeout=Sentinel, token=DefaultToken()
+                )
+            finally:
+                probe.second_at_replace.set()
+                first.join(10)
+        assert errors == []
+        assert adapter.read_meta(varray_with_attributes)["custom_attributes"]["custom_attribute"] == 0.2
+        assert second.custom_attributes["custom_attribute"] == 0.2
         assert [path.name for path in main.parent.iterdir()] == [main.name]
 
 
@@ -333,13 +441,26 @@ class TestVArrayAdapterOfAFileGone:
         finally:
             file.write_bytes(content)
 
-    def test_update_of_the_attributes_of_a_file_gone(self, inserted_varray_with_attributes: VArray, tmp_path: Path):
-        """The directory is locked, the json file in it is gone: nothing is written and no json file comes back."""
+    @pytest.mark.parametrize("gone", ["before-the-lock", "after-the-lock"])
+    def test_update_of_the_attributes_of_a_file_gone(
+        self, inserted_varray_with_attributes: VArray, tmp_path: Path, mocker, gone: str
+    ):
+        """The json file is gone before the lock (the lock refuses) or once it is taken (the read refuses).
+
+        Nothing is written and no json file comes back.
+        """
         varray = inserted_varray_with_attributes
         adapter = varray._adapter
         file = adapter._get_main_path_to_file(varray)
         attributes = dict(varray.custom_attributes)
-        file.rename(tmp_path / file.name)
+        if gone == "before-the-lock":
+            file.rename(tmp_path / file.name)
+        else:
+            mocker.patch.object(
+                adapter,
+                "_get_main_path_to_file",
+                side_effect=MovedAwayOnCall(adapter._get_main_path_to_file, tmp_path / file.name),
+            )
         try:
             with pytest.raises(DekerInstanceNotExistsError) as error:
                 adapter.update_meta_custom_attributes(
