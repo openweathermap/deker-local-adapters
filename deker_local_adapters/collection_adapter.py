@@ -87,7 +87,8 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
 
         :param collection: Collection to be created
         :param timeout: seconds to wait for the lock of the collection as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client
+          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``CollectionLock``), not by
+          its body: the lock waits for another creation or clearing of the collection no longer than that
         :param token: token of the write operation
         :raises DekerMemoryError: if one array of the collection would not fit the memory limit, unless the
           check is skipped by the client
@@ -153,7 +154,8 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
 
         :param collection: Collection to be cleared
         :param timeout: seconds to wait for the lock of the collection as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client
+          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``CollectionLock``), not by
+          its body: the lock waits for another creation or clearing of the collection no longer than that
         :param token: token of the write operation
         """
         check(token)

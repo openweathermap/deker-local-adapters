@@ -116,8 +116,9 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         """Delete the files of the array.
 
         :param array: array instance
-        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client
+        :param timeout: taken for the common signature of the adapters and not used here: the method takes no
+          lock; ``LocalArrayAdapter.delete`` waits for the lock of the file of an Array before it calls this
+          method, the json file of a VArray is deleted without a lock
         :param token: token of the write operation
         """
         check(token)

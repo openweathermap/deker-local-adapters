@@ -144,7 +144,9 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
 
         :param array: Array instance
         :param bounds: array bounds to read
-        :param timeout: seconds of the read as the call gave them
+        :param timeout: seconds of the read as the call gave them; taken for the common signature of the adapters
+          and not used here: the read lock of the method (``ReadArrayLock``) does not wait, a writer refuses it at
+          once, and the limit of the read comes with the token
         :param token: token of the read operation
         :returns: data within the bounds; a scalar for a single cell
         :raises DekerLockError: if a writer holds the file
@@ -183,7 +185,9 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
 
         :param array: Array instance
         :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client
+          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``WriteArrayLock``); the
+          body only passes it on to ``LocalAdapterMixin.delete``, which does not use it: the lock waits for the
+          readers and the writer of the file no longer than that
         :param token: token of the write operation
         """
         super().delete(array, timeout=timeout, token=token)
@@ -216,7 +220,8 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         :param bounds: array bounds to be updated
         :param data: new data of the shape of the bounds, or a number that fills them
         :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client
+          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``WriteArrayLock``), not
+          by its body: the lock waits for the readers and the writer of the file no longer than that
         :param token: token of the write operation
         :raises DekerArrayError: if the data is ``None``
         :raises DekerArrayTypeError: if the data does not fit the dtype of the array
@@ -254,7 +259,8 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         :param array: Array instance
         :param attributes: new custom attributes
         :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client
+          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``WriteArrayLock``), not
+          by its body: the lock waits for the readers and the writer of the file no longer than that
         :param token: token of the write operation
         :raises DekerLockError: if the file is not released within the write lock timeout
         :raises DekerInstanceNotExistsError: if the file is gone
@@ -282,7 +288,8 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         :param array: Array instance
         :param bounds: array bounds to clear
         :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client
+          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``WriteArrayLock``), not
+          by its body: the lock waits for the readers and the writer of the file no longer than that
         :param token: token of the write operation
         :raises DekerLockError: if the file is not released within the write lock timeout
         :raises DekerInstanceNotExistsError: if the file is gone
