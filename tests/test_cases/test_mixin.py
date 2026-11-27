@@ -1,5 +1,7 @@
 import errno
+import gc
 import os
+import warnings
 
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
@@ -63,6 +65,25 @@ def twin(array: Array | VArray) -> Array | VArray:
     )
 
 
+def fill_symlink_directory(symlinks_path: Path, entries: tuple[str, ...] | None) -> None:
+    """Make the symlink directory of the primary attributes with the entries.
+
+    :param symlinks_path: the symlink directory
+    :param entries: ``None`` for no directory; else the names of its entries: ``subdir`` is a directory,
+        a name starting with ``broken`` is a symlink to a missing file, any other name is a file
+    """
+    if entries is None:
+        return
+    symlinks_path.mkdir(parents=True)
+    for name in entries:
+        if name == "subdir":
+            (symlinks_path / name).mkdir()
+        elif name.startswith("broken"):
+            os.symlink(symlinks_path / "missing.hdf5", symlinks_path / name)
+        else:
+            (symlinks_path / name).write_text("x")
+
+
 @pytest.mark.parametrize("adapter_", ["local_array_adapter", "local_varray_adapter"])
 def test_broken_symlink(adapter_: str, request, local_array_adapter, local_varray_adapter):
     adapter = request.getfixturevalue(adapter_)
@@ -97,6 +118,46 @@ def test_broken_symlink(adapter_: str, request, local_array_adapter, local_varra
             local_array_adapter,
             local_varray_adapter if isinstance(adapter, LocalVArrayAdapter) else None,
         )
+
+
+@pytest.mark.parametrize(
+    ("entries", "expected"),
+    [
+        pytest.param(("subdir", "found.hdf5"), "found.hdf5", id="found"),
+        pytest.param(("subdir", "broken.hdf5"), DekerBrokenSymlinkError, id="broken-symlink"),
+        pytest.param(("subdir",), None, id="only-a-subdirectory"),
+        pytest.param((), None, id="empty-directory"),
+        pytest.param(None, None, id="no-directory"),
+    ],
+)
+def test_symlink_by_primary_attributes_closes_the_directory(
+    array_collection_with_attributes: Collection,
+    array_with_attributes: Array,
+    entries: tuple[str, ...] | None,
+    expected: str | type[DekerBrokenSymlinkError] | None,
+):
+    """The search gives the same outcome as before and leaves no unclosed scandir iterator behind."""
+    adapter = array_with_attributes._adapter
+    schema = array_collection_with_attributes.array_schema
+    attributes = array_with_attributes.primary_attributes
+    symlinks_path = get_symlink_path(
+        path_to_symlink_dir=array_collection_with_attributes.path / adapter.symlinks_dir,
+        primary_attributes_schema=schema.primary_attributes,
+        primary_attributes=attributes,
+    )
+    fill_symlink_directory(symlinks_path, entries)
+    gc.collect()  # the garbage of the fixtures is not the search's
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always", ResourceWarning)
+        if expected is DekerBrokenSymlinkError:
+            with pytest.raises(DekerBrokenSymlinkError, match="broken symlink"):
+                adapter._symlink_by_primary_attributes(attributes, schema)
+        elif expected is None:
+            assert adapter._symlink_by_primary_attributes(attributes, schema) is None
+        else:
+            assert adapter._symlink_by_primary_attributes(attributes, schema) == Path(symlinks_path) / expected
+        gc.collect()  # an unclosed iterator warns when it is collected
+    assert [str(warning.message) for warning in caught if issubclass(warning.category, ResourceWarning)] == []
 
 
 class TestMixinEdges:

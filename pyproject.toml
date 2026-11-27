@@ -277,7 +277,12 @@ testpaths = "./tests"
 #log_cli_level = "DEBUG"
 
 pythonpath = ["./deker_local_adapters", "./.venv", "./venv"]
-filterwarnings = ["ignore::UserWarning", 'ignore::DeprecationWarning', "ignore::ResourceWarning"]
+filterwarnings = [
+    "ignore::UserWarning",
+    "ignore::DeprecationWarning",
+    "error::ResourceWarning",
+    "error::pytest.PytestUnraisableExceptionWarning"
+]
 # a hung test (a lock never released, a thread never answering) fails instead of blocking the run
 timeout = 300
 timeout_method = "signal"

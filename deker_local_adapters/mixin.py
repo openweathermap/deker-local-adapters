@@ -305,14 +305,15 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
             primary_attributes=primary_attributes,
         )
         try:
-            for file in os.scandir(symlinks_path):
-                if file.is_file():
-                    path = Path(symlinks_path) / file.name
-                    self.logger.debug("filtered %s", path)
-                    return path
-                # If symlink is broken
-                elif file.is_symlink() and not file.is_file():
-                    raise DekerBrokenSymlinkError(f"Seems like {file} is a broken symlink.")
+            with os.scandir(symlinks_path) as files:
+                for file in files:
+                    if file.is_file():
+                        path = Path(symlinks_path) / file.name
+                        self.logger.debug("filtered %s", path)
+                        return path
+                    # If symlink is broken
+                    elif file.is_symlink() and not file.is_file():
+                        raise DekerBrokenSymlinkError(f"Seems like {file} is a broken symlink.")
         except FileNotFoundError:
             self.logger.debug("nothing was filtered")
         return None
