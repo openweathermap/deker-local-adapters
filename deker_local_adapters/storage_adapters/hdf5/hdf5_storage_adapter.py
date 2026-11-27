@@ -34,7 +34,10 @@ from numpy import ndarray
 
 from deker_local_adapters.storage_adapters.hdf5.hdf5_options import HDF5Options
 
+# The child applications without hdf5plugin read the compressed files with the filters of this path. HDF5 loads
+# them in a process inheriting it without the initialisation writing needs: register initialises them over.
 os.environ["HDF5_PLUGIN_PATH"] = hdf5plugin.PLUGIN_PATH
+hdf5plugin.register(force=True)
 os.environ["HDF5_USE_FILE_LOCKING"] = "FALSE"
 
 

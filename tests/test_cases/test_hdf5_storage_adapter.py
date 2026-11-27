@@ -1,12 +1,16 @@
 """Direct tests of the HDF5 storage adapter: the ``empty_cells`` counter and the ``data`` dataset life cycle."""
 
 import json
+import os
+import subprocess
+import sys
 
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
 
 import h5py
+import hdf5plugin
 import numpy as np
 import pytest
 
@@ -1108,3 +1112,74 @@ class TestBounds:
         assert len(set(outcomes)) == 1, outcomes  # the three operations agree on the expression
         assert np.array_equal(whole(adapter, path, BOUNDS_SHAPE), data)
         assert empty_cells(path) == 0
+
+
+# A child process imports the adapter, writes an array with one hdf5plugin filter and reads it back.
+CHILD_WRITE_AND_READ = """
+import sys
+
+from pathlib import Path
+
+import hdf5plugin
+import numpy as np
+
+from deker_local_adapters.storage_adapters.hdf5.hdf5_options import HDF5CompressionOpts, HDF5Options
+from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
+
+name, dtype, path = sys.argv[1], np.dtype(sys.argv[2]).type, Path(sys.argv[3])
+shape = (16, 16)
+data = np.arange(256, dtype=dtype).reshape(shape)
+options = HDF5Options(chunks=shape, compression_opts=HDF5CompressionOpts(**hdf5plugin.get_filters(name)[0]()))
+adapter = HDF5StorageAdapter()
+adapter.create(path, shape, {"id": name})
+adapter.update_data(path, np.index_exp[:], data, dtype, shape, 1000, options)
+read = adapter.read_data(path, shape, np.index_exp[:], 1000, dtype)
+print(np.allclose(read, data, rtol=0, atol=0.01))  # SZ and Sperr are lossy
+"""
+# A child process reads the array with h5py alone, through the filters of HDF5_PLUGIN_PATH.
+CHILD_READ_WITH_H5PY_ALONE = """
+import sys
+
+import h5py
+import numpy as np
+
+with h5py.File(sys.argv[1], "r") as f:
+    read = f["data"][()]
+print("hdf5plugin" not in sys.modules, np.allclose(read, np.arange(256).reshape(16, 16), rtol=0, atol=0.01))
+"""
+INTEGER_ONLY_FILTERS = ("fcidecomp", "htj2k")  # JPEG-LS and HTJ2K compress 8- and 16-bit integers only
+
+
+class TestChildProcess:
+    """A child process inherits the environment of the program that imported the adapter (this one)."""
+
+    @pytest.mark.timeout(60)
+    @pytest.mark.parametrize("environment", ["inherited", "set_before_start"])
+    @pytest.mark.parametrize("name", sorted(hdf5plugin.FILTERS))
+    def test_child_process_writes_and_reads_with_every_hdf5plugin_filter(self, tmp_path, name, environment):
+        """A process started with HDF5_PLUGIN_PATH, inherited from here or set by its user, writes and reads."""
+        dtype = "uint16" if name in INTEGER_ONLY_FILTERS else "float32"
+        env = None if environment == "inherited" else {**os.environ, "HDF5_PLUGIN_PATH": hdf5plugin.PLUGIN_PATH}
+        child = subprocess.run(
+            [sys.executable, "-c", CHILD_WRITE_AND_READ, name, dtype, str(tmp_path / "array.hdf5")],
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        assert (child.returncode, child.stdout) == (0, "True\n"), child.stderr
+
+    @pytest.mark.timeout(60)
+    @pytest.mark.parametrize("name", sorted(hdf5plugin.FILTERS))
+    def test_child_process_reads_with_h5py_alone(self, adapter, tmp_path, name):
+        """HDF5_PLUGIN_PATH lets a child application without hdf5plugin read the compressed files."""
+        shape = (16, 16)
+        path = tmp_path / "array.hdf5"
+        data = np.arange(256, dtype="uint16" if name in INTEGER_ONLY_FILTERS else "float32").reshape(shape)
+        options = HDF5Options(chunks=shape, compression_opts=HDF5CompressionOpts(**hdf5plugin.get_filters(name)[0]()))
+        adapter.create(path, shape, {"id": name})
+        adapter.update_data(path, np.index_exp[:], data, data.dtype.type, shape, 1000, options)
+        child = subprocess.run(
+            [sys.executable, "-c", CHILD_READ_WITH_H5PY_ALONE, str(path)], capture_output=True, text=True, check=False
+        )
+        assert (child.returncode, child.stdout) == (0, "True True\n"), child.stderr
