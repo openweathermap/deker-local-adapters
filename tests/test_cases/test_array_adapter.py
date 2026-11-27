@@ -18,7 +18,13 @@ from cantok import DefaultToken, SimpleToken
 from deker.arrays import Array, VArray
 from deker.client import Client
 from deker.collection import Collection
-from deker.errors import DekerArrayError, DekerArrayTypeError, DekerLockError, DekerValidationError
+from deker.errors import (
+    DekerArrayError,
+    DekerArrayTypeError,
+    DekerInstanceNotExistsError,
+    DekerLockError,
+    DekerValidationError,
+)
 from deker.flock import Flock
 from deker.schemas import ArraySchema, DimensionSchema
 from deker.tools import get_paths
@@ -725,3 +731,70 @@ class TestDeleteAllByVidCancellation:
         )
         assert scope.cancelled
         assert self.arrays_left(inserted_varray, array_adapter) == 0
+
+
+def read_data(adapter, array, **kwargs):
+    adapter.read_data(array, np.index_exp[0, 0, 0], **kwargs)
+
+
+def read_meta(adapter, array, **kwargs):
+    adapter.read_meta(array)
+
+
+# every operation of the adapter that opens the file of the Array, with the method of the storage adapter it calls
+FILE_OPERATIONS = {
+    "read_data": (read_data, "read_data"),
+    "read_meta": (read_meta, "read_meta"),
+    "update": (write_update, "update_data"),
+    "clear": (write_clear, "clear_data"),
+    "update_meta_custom_attributes": (write_attributes, "update_meta_custom_attributes"),
+}
+
+
+class MoveAwayAndCall:
+    """Stand for a method of the storage adapter: moves the file away while the lock is held, then does the real work.
+
+    :param method: the real method
+    :param target: where the file is moved to
+    """
+
+    def __init__(self, method, target: Path) -> None:
+        self.method = method
+        self.target = target
+        self.calls = 0
+
+    def __call__(self, path: Path, *args, **kwargs):
+        self.calls += 1
+        path.rename(self.target / path.name)
+        return self.method(path, *args, **kwargs)
+
+
+class TestArrayAdapterOfAFileGone:
+    """A file gone between the lock and its opening is an Array that does not exist; a broken file stays its error."""
+
+    @pytest.mark.parametrize("operation", list(FILE_OPERATIONS))
+    def test_file_gone_after_the_lock(self, inserted_array: Array, tmp_path: Path, mocker: MockerFixture, operation):
+        adapter = inserted_array._adapter
+        call, storage_method = FILE_OPERATIONS[operation]
+        file = adapter._get_main_path_to_file(inserted_array)
+        move = MoveAwayAndCall(getattr(adapter.storage_adapter, storage_method), tmp_path)
+        mocker.patch.object(adapter.storage_adapter, storage_method, side_effect=move)
+        with pytest.raises(DekerInstanceNotExistsError) as error:
+            call(adapter, inserted_array, timeout=Sentinel, token=DefaultToken())
+        assert str(error.value) == f"{file} doesn't exist"
+        assert move.calls == 1
+        holder = Flock(tmp_path / file.name)
+        holder.acquire()  # the lock of the call is released
+        holder.release()
+
+    @pytest.mark.parametrize("operation", list(FILE_OPERATIONS))
+    def test_broken_file_keeps_its_error(self, inserted_array: Array, operation):
+        """A file that is there but is not an hdf5 file is not a missing Array (a guard)."""
+        adapter = inserted_array._adapter
+        call, _ = FILE_OPERATIONS[operation]
+        file = adapter._get_main_path_to_file(inserted_array)
+        file.write_bytes(b"not an hdf5 file")
+        with pytest.raises(OSError) as error:
+            call(adapter, inserted_array, timeout=Sentinel, token=DefaultToken())
+        assert type(error.value) is OSError
+        assert "file signature not found" in str(error.value)

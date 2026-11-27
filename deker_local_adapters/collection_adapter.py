@@ -191,10 +191,13 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
     def __iter__(self) -> Generator[dict, None, None]:
         """Iterate over the metadata of the collections: every directory under the collections directory.
 
-        :yields: the metadata of every collection
+        :yields: the metadata of every collection; a directory without its collection file is skipped
         """
         with os.scandir(self.collections_resource) as directories:
             for directory in directories:
                 if os.path.isdir(directory):
-                    meta = self.read(directory.name)
+                    try:
+                        meta = self.read(directory.name)
+                    except (DekerCollectionNotExistsError, FileNotFoundError):
+                        continue  # no collection file, or it is gone since it was checked
                     yield meta

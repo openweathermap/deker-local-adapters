@@ -610,3 +610,86 @@ class TestGetByPrimaryAttributesChecksTheAttributes:
                 adapter,
                 None,
             )
+
+
+class MoveAwayOnFirstRead:
+    """Stand for ``read_meta`` of an adapter class: the first call moves the main file away first, as a deletion
+    meanwhile does; every call does the real work then.
+
+    :param method: the real method
+    :param target: where the file is moved to
+    """
+
+    def __init__(self, method, target: Path) -> None:
+        self.method = method
+        self.target = target
+        self.calls = 0
+        self.gone: list[Path] = []
+
+    def __call__(self, adapter, path: Path):
+        self.calls += 1
+        if self.calls == 1:
+            path.rename(self.target / path.name)
+            self.gone.append(path)
+        return self.method(adapter, path)
+
+
+class TestArrayWhoseFileIsGone:
+    """An Array or a VArray whose main file is gone does not exist: it is deleted, not found, skipped by the walk."""
+
+    @pytest.mark.parametrize("array_", ["inserted_array", "inserted_varray"])
+    @pytest.mark.parametrize("gone", ["nothing", "file", "file-and-directory"])
+    def test_is_deleted(self, request, tmp_path: Path, array_: str, gone: str):
+        """The directory of the main file may stay: the Array is deleted when its main file is gone."""
+        array = request.getfixturevalue(array_)
+        adapter = array._adapter
+        file = adapter._get_main_path_to_file(array)
+        if gone != "nothing":
+            file.rename(tmp_path / file.name)
+        if gone == "file-and-directory":
+            file.parent.rmdir()
+        try:
+            assert adapter.is_deleted(array) is (gone != "nothing")
+        finally:
+            if gone != "nothing":
+                file.parent.mkdir(exist_ok=True)
+                (tmp_path / file.name).rename(file)
+
+    @pytest.mark.parametrize("array_", ["inserted_array", "inserted_varray"])
+    def test_get_by_id_of_a_file_gone_meanwhile(self, request, tmp_path: Path, mocker: MockerFixture, array_: str):
+        """The file is there when it is looked for and gone when it is read: the Array is not found."""
+        array = request.getfixturevalue(array_)
+        adapter = array._adapter
+        file = adapter._get_main_path_to_file(array)
+        read = MoveAwayOnFirstRead(type(adapter).read_meta, tmp_path)
+        mocker.patch.object(type(adapter), "read_meta", autospec=True, side_effect=read)
+        if isinstance(array, VArray):
+            arguments = (array._VArray__collection, array._VArray__array_adapter, adapter)
+        else:
+            arguments = (array._Array__collection, adapter, None)
+        try:
+            assert adapter.get_by_id(array.id, *arguments) is None
+            assert read.calls == 1
+            assert read.gone == [file]
+        finally:
+            (tmp_path / file.name).rename(file)
+
+    @pytest.mark.parametrize("collection_", ["array_collection", "varray_collection"])
+    def test_walk_skips_what_disappears(self, request, tmp_path: Path, mocker: MockerFixture, collection_: str):
+        """The other arrays are yielded, the one gone meanwhile is skipped without an error."""
+        collection: Collection = request.getfixturevalue(collection_)
+        arrays = [collection.create() for _ in range(2)]
+        adapter = arrays[0]._adapter
+        read = MoveAwayOnFirstRead(type(adapter).read_meta, tmp_path)
+        mocker.patch.object(type(adapter), "read_meta", autospec=True, side_effect=read)
+        try:
+            metas = list(adapter)
+            assert read.calls == 2
+            assert len(read.gone) == 1
+            gone = read.gone[0].name.removesuffix(adapter.file_ext)
+            assert [meta["id"] for meta in metas] == [array.id for array in arrays if array.id != gone]
+        finally:
+            for file in read.gone:
+                (tmp_path / file.name).rename(file)
+            for array in arrays:
+                array.delete()

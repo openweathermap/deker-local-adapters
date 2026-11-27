@@ -10,7 +10,7 @@ import pytest
 from cantok import DefaultToken, SimpleToken
 from deker.arrays import VArray
 from deker.collection import Collection
-from deker.errors import DekerArrayError, DekerValidationError
+from deker.errors import DekerArrayError, DekerInstanceNotExistsError, DekerValidationError
 from deker.tools import get_paths
 from deker_tools.cancel import TokenCancelledError
 from deker_tools.path import is_empty
@@ -302,3 +302,51 @@ class TestVArrayAdapterCancellation:
         args = (np.index_exp[:], 1.0) if method == "update" else (np.index_exp[:],)
         with pytest.raises(NotImplementedError):
             getattr(inserted_varray._adapter, method)(inserted_varray, *args, timeout=Sentinel, token=DefaultToken())
+
+
+class TestVArrayAdapterOfAFileGone:
+    """A json file that is gone is a VArray that does not exist; a broken json file stays its error."""
+
+    @pytest.mark.parametrize("by_path", [False, True], ids=["by-varray", "by-path"])
+    def test_read_meta_of_a_file_gone(self, inserted_varray: VArray, tmp_path: Path, by_path: bool):
+        adapter = inserted_varray._adapter
+        file = adapter._get_main_path_to_file(inserted_varray)
+        file.rename(tmp_path / file.name)
+        try:
+            with pytest.raises(DekerInstanceNotExistsError) as error:
+                adapter.read_meta(file if by_path else inserted_varray)
+            assert str(error.value) == f"{file} doesn't exist"
+        finally:
+            (tmp_path / file.name).rename(file)
+
+    def test_read_meta_of_a_broken_file_keeps_its_error(self, inserted_varray: VArray):
+        """A file that is there but is not a json file is not a missing VArray (a guard)."""
+        adapter = inserted_varray._adapter
+        file = adapter._get_main_path_to_file(inserted_varray)
+        content = file.read_bytes()
+        file.write_text("{not json")
+        try:
+            with pytest.raises(DekerArrayError) as error:
+                adapter.read_meta(inserted_varray)
+            assert type(error.value) is DekerArrayError
+            assert str(error.value).startswith(f"VArray metadata cannot be read from {file}: ")
+        finally:
+            file.write_bytes(content)
+
+    def test_update_of_the_attributes_of_a_file_gone(self, inserted_varray_with_attributes: VArray, tmp_path: Path):
+        """The directory is locked, the json file in it is gone: nothing is written and no json file comes back."""
+        varray = inserted_varray_with_attributes
+        adapter = varray._adapter
+        file = adapter._get_main_path_to_file(varray)
+        attributes = dict(varray.custom_attributes)
+        file.rename(tmp_path / file.name)
+        try:
+            with pytest.raises(DekerInstanceNotExistsError) as error:
+                adapter.update_meta_custom_attributes(
+                    varray, {"custom_attribute": 0.9}, timeout=Sentinel, token=DefaultToken()
+                )
+            assert str(error.value) == f"{file} doesn't exist"
+            assert varray.custom_attributes == attributes
+            assert list(file.parent.iterdir()) == []
+        finally:
+            (tmp_path / file.name).rename(file)

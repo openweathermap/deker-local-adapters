@@ -25,7 +25,7 @@ from cantok import AbstractToken
 from deker.ABC.base_adapters import BaseArrayAdapter
 from deker.arrays import Array
 from deker.ctx import CTX
-from deker.errors import DekerArrayError
+from deker.errors import DekerArrayError, DekerInstanceNotExistsError
 from deker.locks import ReadArrayLock, WriteArrayLock
 from deker.schemas import AttributeSchema
 from deker.tools import get_main_path, get_symlink_path
@@ -148,10 +148,14 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         :param token: token of the read operation
         :returns: data within the bounds; a scalar for a single cell
         :raises DekerLockError: if a writer holds the file
+        :raises DekerInstanceNotExistsError: if the file is gone
         """
         check(token)
         filename = self._get_main_path_to_file(array)
-        data = self.storage_adapter.read_data(filename, array.shape, bounds, array.fill_value, array.dtype)
+        try:
+            data = self.storage_adapter.read_data(filename, array.shape, bounds, array.fill_value, array.dtype)
+        except FileNotFoundError:
+            raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
         check(token)
         return data
 
@@ -163,10 +167,14 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         :param array: Array instance or the path to its main file
         :returns: array metadata
         :raises DekerLockError: if a writer holds the file
+        :raises DekerInstanceNotExistsError: if the file is gone
         """
         filename = array if isinstance(array, Path) else self._get_main_path_to_file(array)
 
-        result = self.storage_adapter.read_meta(filename)
+        try:
+            result = self.storage_adapter.read_meta(filename)
+        except FileNotFoundError:
+            raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
         return result
 
     @WriteArrayLock()
@@ -214,6 +222,7 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         :raises DekerArrayTypeError: if the data does not fit the dtype of the array
         :raises IndexError: if the data does not fit the shape of the bounds
         :raises DekerLockError: if the file is not released within the write lock timeout
+        :raises DekerInstanceNotExistsError: if the file is gone
         """
         check(token)
         filename = self._get_main_path_to_file(array)
@@ -222,15 +231,18 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
             raise DekerArrayError("Updating data shall not be None")
         data = self._process_data(array.dtype, array.shape, data, bounds)
         mark_started(token)
-        self.storage_adapter.update_data(
-            filename,
-            bounds,
-            data,
-            array.dtype,
-            array.shape,
-            array.fill_value,
-            self.collection_options,
-        )
+        try:
+            self.storage_adapter.update_data(
+                filename,
+                bounds,
+                data,
+                array.dtype,
+                array.shape,
+                array.fill_value,
+                self.collection_options,
+            )
+        except FileNotFoundError:
+            raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
 
     @check_ctx_state
     @WriteArrayLock()
@@ -245,6 +257,7 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
           ``write_lock_timeout`` of the client
         :param token: token of the write operation
         :raises DekerLockError: if the file is not released within the write lock timeout
+        :raises DekerInstanceNotExistsError: if the file is gone
         """
         check(token)
         filename = self._get_main_path_to_file(array)
@@ -255,6 +268,8 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
                 filename,
                 attributes,
             )
+        except FileNotFoundError:
+            raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
         except Exception as e:
             self.logger.exception(e)
             raise e
@@ -270,16 +285,20 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
           ``write_lock_timeout`` of the client
         :param token: token of the write operation
         :raises DekerLockError: if the file is not released within the write lock timeout
+        :raises DekerInstanceNotExistsError: if the file is gone
         """
         check(token)
         filename = self._get_main_path_to_file(array)
         mark_started(token)
-        self.storage_adapter.clear_data(
-            filename,
-            array.shape,
-            bounds,
-            array.fill_value,
-        )
+        try:
+            self.storage_adapter.clear_data(
+                filename,
+                array.shape,
+                bounds,
+                array.fill_value,
+            )
+        except FileNotFoundError:
+            raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
 
     @check_ctx_state
     def _adapter_iter(self, vid: str) -> Generator[Path, None, None]:

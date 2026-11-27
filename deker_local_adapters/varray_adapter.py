@@ -25,7 +25,7 @@ from deker.ABC import BaseStorageAdapter
 from deker.ABC.base_adapters import BaseVArrayAdapter
 from deker.arrays import VArray
 from deker.ctx import CTX
-from deker.errors import DekerArrayError
+from deker.errors import DekerArrayError, DekerInstanceNotExistsError
 from deker.locks import UpdateMetaAttributeLock
 from deker.tools.decorators import check_ctx_state
 from deker.types import ArrayMeta, Data, Numeric, Slice
@@ -139,7 +139,8 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
 
         :param array: VArray instance or the path to its main file
         :returns: VArray metadata
-        :raises DekerArrayError: if the file is missing or is not a json
+        :raises DekerInstanceNotExistsError: if the file is gone
+        :raises DekerArrayError: if the file is not a json
         """
         filename = array if isinstance(array, Path) else self._get_main_path_to_file(array)
         try:
@@ -147,6 +148,8 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
                 data = f.read()
                 meta = json.loads(data)
                 return meta
+        except FileNotFoundError:
+            raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
         except Exception as e:
             raise DekerArrayError(f"VArray metadata cannot be read from {filename}: {e}")
 
@@ -166,14 +169,18 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
           ``write_lock_timeout`` of the client
         :param token: token of the write operation
         :raises DekerLockError: if the file is held by another writer
+        :raises DekerInstanceNotExistsError: if the file or its directory is gone
         """
         check(token)
         filename = self._get_main_path_to_file(array)
         temporary = filename.with_name(filename.name + ".tmp")
         mark_started(token)
         try:
-            with open(filename, encoding="utf-8") as f:
-                meta = json.loads(f.read())
+            try:
+                with open(filename, encoding="utf-8") as f:
+                    meta = json.loads(f.read())
+            except FileNotFoundError:
+                raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
             meta["custom_attributes"] = attributes
             json_meta = json.dumps(meta, default=str)
             try:

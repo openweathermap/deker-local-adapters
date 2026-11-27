@@ -26,7 +26,7 @@ from cantok import AbstractToken
 from deker.ABC.base_adapters import IArrayAdapter
 from deker.ABC.base_locks import wait_for_unlock
 from deker.arrays import Array, VArray
-from deker.errors import DekerArrayError, DekerLockError, DekerValidationError
+from deker.errors import DekerArrayError, DekerInstanceNotExistsError, DekerLockError, DekerValidationError
 from deker.flock import Flock
 from deker.log import SelfLoggerMixin
 from deker.tools import get_main_path, get_paths, get_symlink_path
@@ -137,7 +137,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         :param array: Array to check
         :returns: ``True`` if the array main file does not exist
         """
-        path = get_main_path(array.id, self.collection_path / self.data_dir)
+        path = get_main_path(array.id, self.collection_path / self.data_dir) / (array.id + self.file_ext)
         # If it does not exist, then it's not created or deleted
         return not os.path.exists(path)
 
@@ -369,7 +369,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         :param collection: Collection
         :param array_adapter: Arrays' adapter
         :param varray_adapter: VArrays' adapter
-        :returns: Array or VArray with the id, or ``None`` if its file does not exist
+        :returns: Array or VArray with the id, or ``None`` if its file does not exist or is gone while it is read
         """
         filename = id_ + self.file_ext
 
@@ -378,12 +378,15 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         file = path / filename
         if file.exists():
             self.logger.debug("filtered %s", file)
-            return self._init_array(file, collection, array_adapter, varray_adapter)
+            try:
+                return self._init_array(file, collection, array_adapter, varray_adapter)
+            except DekerInstanceNotExistsError:
+                return None  # the file is gone since it was found
 
     def __iter__(self) -> Generator[ArrayMeta, None, None]:
         """Iterate over all the arrays or varrays in collection, walking its data directory.
 
-        :yields: the metadata of every main file
+        :yields: the metadata of every main file; a file gone since its directory was listed is skipped
         """
         root_path = self.collection_path / self.data_dir
         for root, _, files in os.walk(root_path):
@@ -391,5 +394,8 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
                 if not file.endswith(self.file_ext):
                     continue
                 path = Path(os.path.join(root, file))
-                meta = self.read_meta(path)
+                try:
+                    meta = self.read_meta(path)
+                except DekerInstanceNotExistsError:
+                    continue
                 yield meta

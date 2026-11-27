@@ -391,6 +391,25 @@ class TestCollectionAdapterCancellation:
         assert [a.id for a in array_collection] == [array.id]
 
 
+class MoveAwayOnOpen:
+    """Stand for ``open`` in the collection adapter: the first call moves the file away before opening it.
+
+    The collection file was checked a moment ago, as a deletion of the collection meanwhile leaves it.
+
+    :param target: where the file is moved to
+    """
+
+    def __init__(self, target: Path) -> None:
+        self.target = target
+        self.gone: list[str] = []
+
+    def __call__(self, file: Path, *args, **kwargs):
+        if not self.gone:
+            file.rename(self.target / file.name)
+            self.gone.append(file.stem)
+        return open(file, *args, **kwargs)
+
+
 class TestCollectionAdapterIterClosesTheDirectory:
     """The iteration over the collections leaves no unclosed scandir iterator, however it ends.
 
@@ -427,7 +446,44 @@ class TestCollectionAdapterIterClosesTheDirectory:
         gc.collect()
 
     def test_iteration_stopped_by_an_error(self, collections_path: Path, collection_adapter: LocalCollectionAdapter):
-        (collections_path / "broken").mkdir()
-        with pytest.raises(DekerCollectionNotExistsError, match="broken collection doesn't exist"):
+        """A broken collection file stops the iteration with its error."""
+        fill_collections_directory(collections_path, ("broken",))
+        (collections_path / "broken" / "broken.json").write_text("{not json")
+        with pytest.raises(json.JSONDecodeError):
             list(collection_adapter)
         gc.collect()
+
+    def test_directory_without_a_collection_file_is_skipped(
+        self, collections_path: Path, collection_adapter: LocalCollectionAdapter
+    ):
+        """A directory without its collection file is not a collection: check_integrity finds it and removes it."""
+        fill_collections_directory(collections_path, ("first", "second"))
+        (collections_path / "half-made").mkdir()
+        assert sorted(meta["name"] for meta in collection_adapter) == ["first", "second"]
+        gc.collect()
+
+    def test_collection_file_gone_meanwhile_is_skipped(
+        self,
+        collections_path: Path,
+        collection_adapter: LocalCollectionAdapter,
+        tmp_path_factory: pytest.TempPathFactory,
+        mocker: MockerFixture,
+    ):
+        """The collection file is there when it is checked and gone when it is opened: the collection is skipped."""
+        fill_collections_directory(collections_path, ("first", "second"))
+        move = MoveAwayOnOpen(tmp_path_factory.mktemp("away"))
+        mocker.patch("deker_local_adapters.collection_adapter.open", create=True, side_effect=move)
+        names = [meta["name"] for meta in collection_adapter]
+        assert len(move.gone) == 1
+        assert names == [name for name in ("first", "second") if name not in move.gone]
+        gc.collect()
+
+    def test_missing_collections_directory_raises(
+        self, tmp_path: Path, collection_adapter: LocalCollectionAdapter, mocker: MockerFixture
+    ):
+        """The collections directory itself is never skipped: its absence is raised as before (a guard)."""
+        missing = tmp_path / "collections"
+        mocker.patch.object(LocalCollectionAdapter, "collections_resource", missing)
+        with pytest.raises(FileNotFoundError) as error:
+            list(collection_adapter)
+        assert error.value.filename == str(missing)
