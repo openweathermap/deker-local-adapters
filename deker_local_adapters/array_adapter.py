@@ -32,6 +32,7 @@ from deker.schemas import AttributeSchema
 from deker.tools import get_main_path, get_symlink_path
 from deker.tools.attributes import make_ordered_dict
 from deker.tools.decorators import check_ctx_state
+from deker.tools.path import check_storage_directory
 from deker.types import ArrayMeta, Data, Numeric, Slice
 from deker_tools.cancel import check, mark_started
 from deker_tools.typings import SentinelType
@@ -104,6 +105,7 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
                 # just one file is expected inside the list
                 return files[0]
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             return None
 
     def _varray_symlink(self, array: Array) -> Path:
@@ -119,6 +121,7 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
             with open(directory / f"{vid}.json", encoding="utf-8") as f:
                 meta = json.load(f)
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"VArray with id={vid} doesn't exist") from None
         schema = cast("VArraySchema", array._collection.varray_schema)
         primary_attributes, _ = make_ordered_dict(
@@ -180,6 +183,7 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         try:
             data = self.storage_adapter.read_data(filename, array.shape, bounds, array.fill_value, array.dtype)
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
         check(token)
         return data
@@ -199,6 +203,7 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         try:
             result = self.storage_adapter.read_meta(filename)
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
         return result
 
@@ -270,6 +275,7 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
                 self.collection_options,
             )
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
 
     @check_ctx_state
@@ -298,6 +304,7 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
                 attributes,
             )
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
         except Exception as e:
             self.logger.exception(e)
@@ -328,6 +335,7 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
                 array.fill_value,
             )
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
 
     @check_ctx_state

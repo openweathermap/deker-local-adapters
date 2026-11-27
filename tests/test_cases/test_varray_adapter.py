@@ -11,12 +11,17 @@ import pytest
 
 from cantok import DefaultToken, SimpleToken
 from deker.arrays import VArray
+from deker.client import Client
 from deker.collection import Collection
 from deker.errors import DekerArrayError, DekerInstanceNotExistsError, DekerValidationError
+from deker.schemas import VArraySchema
 from deker.tools import get_paths
 from deker_tools.cancel import TokenCancelledError
 from deker_tools.path import is_empty
 from deker_tools.typings import Sentinel
+from pytest_mock import MockerFixture
+
+from tests.conftest import Missing, check_not_found
 
 from deker_local_adapters import LocalVArrayAdapter
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
@@ -471,3 +476,44 @@ class TestVArrayAdapterOfAFileGone:
             assert list(file.parent.iterdir()) == []
         finally:
             (tmp_path / file.name).rename(file)
+
+
+STORAGE_GONE = [pytest.param(True, id="collections gone"), pytest.param(False, id="file gone")]
+
+
+class TestNotFoundTellsAMissingStorageFromAMissingFile:
+    """Every place of the VArray adapter that does not find a file tells a missing collections directory of the
+    storage (critical) from a missing file (the answer as before).
+    """
+
+    @pytest.fixture
+    def varray(self, own_client: Client, varray_schema: VArraySchema) -> VArray:
+        """A VArray of a storage of the test's own.
+
+        :param own_client: client of the storage
+        :param varray_schema: schema of the collection
+        """
+        return own_client.create_collection("own", varray_schema).create()
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_json_file_not_found_by_the_read(self, varray: VArray, storage_gone: bool):
+        adapter = varray._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        filename = adapter._get_main_path_to_file(varray)
+        os.remove(filename)
+        missing.take_away()
+        check_not_found(lambda: adapter.read_meta(filename), missing, f"{filename} doesn't exist")
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_json_file_held_but_not_found_by_the_update(
+        self, varray: VArray, storage_gone: bool, mocker: MockerFixture
+    ):
+        adapter = varray._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        filename = adapter._get_main_path_to_file(varray)
+        mocker.patch("deker_local_adapters.varray_adapter.open", create=True, side_effect=missing)
+        check_not_found(
+            lambda: adapter.update_meta_custom_attributes(varray, {}, timeout=Sentinel, token=DefaultToken()),
+            missing,
+            f"{filename} doesn't exist",
+        )

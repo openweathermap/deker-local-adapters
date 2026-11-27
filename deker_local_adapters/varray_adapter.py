@@ -28,6 +28,7 @@ from deker.ctx import CTX
 from deker.errors import DekerArrayError, DekerInstanceNotExistsError
 from deker.locks import UpdateMetaAttributeLock
 from deker.tools.decorators import check_ctx_state
+from deker.tools.path import check_storage_directory
 from deker.types import ArrayMeta, Data, Numeric, Slice
 from deker_tools.cancel import check, mark_started
 from deker_tools.typings import SentinelType
@@ -152,6 +153,7 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
                 meta = json.loads(data)
                 return meta
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
         except Exception as e:
             raise DekerArrayError(f"VArray metadata cannot be read from {filename}: {e}")
@@ -185,6 +187,7 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
                 with open(filename, encoding="utf-8") as f:
                     meta = json.loads(f.read())
             except FileNotFoundError:
+                check_storage_directory(self.collection_path.parent)
                 raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
             meta["custom_attributes"] = attributes
             json_meta = json.dumps(meta, default=str)

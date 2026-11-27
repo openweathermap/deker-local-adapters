@@ -33,6 +33,7 @@ from deker_tools.cancel import TokenCancelledError, cancellation_scope, read_tok
 from deker_tools.typings import Sentinel
 from pytest_mock import MockerFixture
 
+from tests.conftest import Missing, check_not_found
 from tests.parameters.index_exp_params import valid_index_exp_params
 from tests.test_cases.test_mixin import (
     AFTER_CHECK,
@@ -919,3 +920,81 @@ class TestCreatorOfAnArrayOfAVArray:
             assert not created_paths(array)[0].exists()
         finally:
             trash.put_back(varray_file)
+
+
+STORAGE_GONE = [pytest.param(True, id="collections gone"), pytest.param(False, id="file gone")]
+
+
+class TestNotFoundTellsAMissingStorageFromAMissingFile:
+    """Every place of the Array adapter that does not find a file tells a missing collections directory of the
+    storage (critical) from a missing file (the answer as before).
+    """
+
+    @pytest.fixture
+    def array(self, own_client: Client, array_schema: ArraySchema) -> Array:
+        """An Array of a storage of the test's own.
+
+        :param own_client: client of the storage
+        :param array_schema: schema of the collection
+        """
+        return own_client.create_collection("own", array_schema).create()
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    @pytest.mark.parametrize(
+        ("inner", "call"),
+        [
+            pytest.param(
+                "read_data",
+                lambda adapter, array: adapter.read_data(
+                    array, np.index_exp[:], timeout=Sentinel, token=DefaultToken()
+                ),
+                id="read_data",
+            ),
+            pytest.param("read_meta", lambda adapter, array: adapter.read_meta(array), id="read_meta"),
+            pytest.param(
+                "update_data",
+                lambda adapter, array: adapter.update(
+                    array, np.index_exp[:], np.zeros(array.shape), timeout=Sentinel, token=DefaultToken()
+                ),
+                id="update",
+            ),
+            pytest.param(
+                "update_meta_custom_attributes",
+                lambda adapter, array: adapter.update_meta_custom_attributes(
+                    array, {}, timeout=Sentinel, token=DefaultToken()
+                ),
+                id="update_meta_custom_attributes",
+            ),
+            pytest.param(
+                "clear_data",
+                lambda adapter, array: adapter.clear(array, np.index_exp[:], timeout=Sentinel, token=DefaultToken()),
+                id="clear",
+            ),
+        ],
+    )
+    def test_file_held_but_not_found(self, array: Array, mocker: MockerFixture, storage_gone: bool, inner: str, call):
+        """The file is held, then not found by the storage adapter: removed with its collection, or alone."""
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        mocker.patch.object(adapter.storage_adapter, inner, side_effect=missing)
+        filename = adapter._get_main_path_to_file(array)
+        check_not_found(lambda: call(adapter, array), missing, f"{filename} doesn't exist")
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_json_file_of_the_varray_of_an_array_not_found(self, array: Array, storage_gone: bool):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        missing.take_away()
+        vid = str(uuid4())
+        array_of_a_varray = type("ArrayOfAVArray", (), {"_vid": vid})()
+        check_not_found(
+            lambda: adapter._varray_symlink(array_of_a_varray), missing, f"VArray with id={vid} doesn't exist"
+        )
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_symlink_of_an_array_of_a_varray_not_found(self, array: Array, storage_gone: bool):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        missing.take_away()
+        attributes = (AttributeSchema(name="vid", dtype=str, primary=True),)
+        check_not_found(lambda: adapter._get_symlink_filename(str(uuid4()), (0,), attributes), missing, None)

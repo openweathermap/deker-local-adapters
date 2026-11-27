@@ -14,26 +14,102 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import errno
 import json
+import logging
 import os
 import shutil
+import threading
 
-from collections.abc import Generator
+from collections.abc import Callable, Generator
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 from cantok import AbstractToken
 from deker.ABC.base_adapters import BaseCollectionAdapter
 from deker.ctx import CTX
-from deker.errors import DekerCollectionAlreadyExistsError, DekerCollectionNotExistsError
+from deker.errors import (
+    DekerCollectionAlreadyExistsError,
+    DekerCollectionNotExistsError,
+    DekerCriticalError,
+    DekerTrashError,
+)
 from deker.locks import CollectionLock
 from deker.tools import check_memory
 from deker.tools.decorators import check_ctx_state
+from deker.tools.path import check_storage_directory
 from deker_tools.cancel import check, mark_started
 from deker_tools.typings import SentinelType
 
 if TYPE_CHECKING:
     from deker.collection import Collection
+
+
+def empty_trash_directory(trash: Path, *, background: bool, logger: logging.Logger) -> None:
+    """Remove everything that lies in the trash of the storage; the trash itself stays.
+
+    The only code of the removal of the trash. The whole trash is walked without following its symlinks: a symlink
+    is removed, its target stays. Everything that can be removed is removed; what is gone already is not an error
+    (another removal of the trash took it). A cancelled operation does not stop the removal.
+
+    :param trash: the trash directory of the storage
+    :param background: return at once and remove in a daemon thread of its own, not of the executor of the client;
+      nobody waits for it, its error goes to the log
+    :param logger: logger of the adapter, for the error of the removal in the background
+    :raises DekerTrashError: if something is not removed, once at the end: the number of what is not removed and the
+      unique reasons; a directory left only because something in it is left is not counted. Not with ``background``
+    """
+    if background:
+        threading.Thread(target=_empty_trash_in_background, args=(trash, logger), daemon=True).start()
+        return
+    failures: list[str] = []
+
+    def fail(error: OSError) -> None:
+        """Count what is not removed or listed, unless it is gone already or keeps something not removed.
+
+        :param error: the error of the removal or of the listing
+        """
+        if error.filename == str(trash):  # the trash itself is not listed
+            check_storage_directory(trash)
+        if error.errno not in (errno.ENOENT, errno.ENOTEMPTY):
+            failures.append(str(error.strerror))
+
+    def remove(function: Callable[[str], None], path: str) -> None:
+        """Remove a file, a symlink or an empty directory.
+
+        :param function: ``os.unlink`` or ``os.rmdir``
+        :param path: what to remove
+        """
+        try:
+            function(path)
+        except OSError as error:
+            fail(error)
+
+    for root, directories, files in os.walk(str(trash), topdown=False, onerror=fail):
+        for name in files:
+            remove(os.unlink, os.path.join(root, name))
+        for name in directories:  # a symlink to a directory is listed here and not walked
+            path = os.path.join(root, name)
+            remove(os.unlink if os.path.islink(path) else os.rmdir, path)
+    if failures:
+        raise DekerTrashError(
+            f"The trash of the storage is not emptied: {len(failures)} files are not removed from {trash}. "
+            f"Reasons: {'; '.join(sorted(set(failures)))}"
+        )
+
+
+def _empty_trash_in_background(trash: Path, logger: logging.Logger) -> None:
+    """Remove everything from the trash in the thread of the background removal: its error goes to the log.
+
+    :param trash: the trash directory of the storage
+    :param logger: logger of the adapter
+    """
+    try:
+        empty_trash_directory(trash, background=False, logger=logger)
+    except DekerCriticalError:
+        pass  # logged as critical where it is raised
+    except Exception as e:  # noqa: BLE001  # nobody waits for the thread: the log is the only one to tell
+        logger.error(e)
 
 
 class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
@@ -45,7 +121,10 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
     """
 
     def __init__(self, ctx: CTX) -> None:
-        """LocalCollectionAdapter constructor: creates the collections directory of the storage if it is missing.
+        """LocalCollectionAdapter constructor: creates the collections directory and the trash of the storage.
+
+        The client builds the adapter when it opens; it is the only place the directories are created. Nobody
+        removes them: one missing when it is needed is critical.
 
         :param ctx: context of the client
         """
@@ -53,6 +132,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
         self.metadata_version = "0.2"
         self.file_ext = ".json"
         self.collections_resource.mkdir(parents=True, exist_ok=True)
+        self.trash_resource.mkdir(exist_ok=True)
 
     def __create_path(self, name: str) -> Path:
         """Create Collection path in the file system.
@@ -63,7 +143,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
         """
         path = self.collections_resource / name
         try:
-            os.makedirs(path)
+            os.mkdir(path)  # never the collections directory: the client creates it
             return path
         except FileExistsError:
             raise DekerCollectionAlreadyExistsError(f"Collection {name} already exists")
@@ -122,6 +202,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
             with open(path) as f:
                 data = json.loads(f.read())
                 return data
+        check_storage_directory(self.collections_resource)
         raise DekerCollectionNotExistsError(f"{name} collection doesn't exist")
 
     @check_ctx_state
@@ -141,7 +222,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
             try:
                 shutil.rmtree(self.collections_resource / collection.name)
             except FileNotFoundError:
-                pass
+                check_storage_directory(self.collections_resource)
             Path.unlink(self.collections_resource / (collection.name + ".lock"), missing_ok=True)
         except Exception as e:
             self.logger.exception(e)
@@ -179,6 +260,20 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
         """Return a path to the directory with collections."""
         return Path(self.uri.path) / self.ctx.config.collections_directory
 
+    @property
+    def trash_resource(self) -> Path:
+        """Return a path to the trash of the storage, next to the directory with collections."""
+        return Path(self.uri.path) / self.ctx.config.trash_directory
+
+    @check_ctx_state
+    def empty_trash(self, *, background: bool) -> None:
+        """Remove everything from the trash of the storage.
+
+        :param background: return at once and remove in a daemon thread, which nobody waits for; its error goes to the
+          log
+        """
+        empty_trash_directory(self.trash_resource, background=background, logger=self.logger)
+
     @check_ctx_state
     def is_deleted(self, collection: "Collection") -> bool:
         """Check if collection was deleted.
@@ -187,19 +282,31 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
         :returns: ``True`` if the collection directory no longer exists
         """
         # If it does not exist, then it's not created or deleted
-        return not (self.collections_resource / collection.name).exists()
+        if (self.collections_resource / collection.name).exists():
+            return False
+        check_storage_directory(self.collections_resource)
+        return True
 
     @check_ctx_state
     def __iter__(self) -> Generator[dict, None, None]:
         """Iterate over the metadata of the collections: every directory under the collections directory.
 
         :yields: the metadata of every collection; a directory without its collection file is skipped
+        :raises DekerCriticalError: if the collections directory of the storage does not exist
         """
-        with os.scandir(self.collections_resource) as directories:
+        try:
+            directories = os.scandir(self.collections_resource)
+        except FileNotFoundError:
+            check_storage_directory(self.collections_resource)
+            raise
+        with directories:
             for directory in directories:
                 if os.path.isdir(directory):
                     try:
                         meta = self.read(directory.name)
-                    except (DekerCollectionNotExistsError, FileNotFoundError):
-                        continue  # no collection file, or it is gone since it was checked
+                    except DekerCollectionNotExistsError:
+                        continue  # no collection file
+                    except FileNotFoundError:
+                        check_storage_directory(self.collections_resource)
+                        continue  # the collection file is gone since it was checked
                     yield meta

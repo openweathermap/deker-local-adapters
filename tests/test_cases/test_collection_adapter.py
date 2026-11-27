@@ -1,10 +1,13 @@
 import errno
 import gc
 import json
+import logging
 import os
 import shutil
+import threading
 import time
 
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from uuid import uuid4
 
@@ -17,8 +20,10 @@ from deker.errors import (
     DekerAdapterClosedError,
     DekerCollectionAlreadyExistsError,
     DekerCollectionNotExistsError,
+    DekerCriticalError,
     DekerLockError,
     DekerMemoryError,
+    DekerTrashError,
 )
 from deker.flock import Flock
 from deker.schemas import ArraySchema, DimensionSchema
@@ -26,9 +31,12 @@ from deker_tools.cancel import TokenCancelledError
 from deker_tools.typings import Sentinel
 from pytest_mock import MockerFixture
 
+from tests.conftest import MISSING, Missing, check_not_found
 from tests.parameters.common import random_string
+from tests.parameters.uri import embedded_uri
 
 from deker_local_adapters import AdaptersFactory, LocalCollectionAdapter
+from deker_local_adapters.collection_adapter import empty_trash_directory
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 
@@ -278,6 +286,15 @@ class TestCollectionAdapter:
 
 
 class TestCollectionAdapterClosed:
+    def test_closed_adapter_does_not_empty_the_trash(self, ctx):
+        adapter = LocalCollectionAdapter(ctx)
+        ctx.is_closed = True
+        try:
+            with pytest.raises(DekerAdapterClosedError):
+                adapter.empty_trash(background=False)
+        finally:
+            ctx.is_closed = False
+
     @pytest.mark.parametrize("method", ["create", "delete", "clear", "is_deleted"])
     def test_closed_adapter_raises(self, ctx, array_collection: Collection, method: str):
         """Tests if a collection adapter of a closed context answers with DekerAdapterClosedError."""
@@ -478,12 +495,341 @@ class TestCollectionAdapterIterClosesTheDirectory:
         assert names == [name for name in ("first", "second") if name not in move.gone]
         gc.collect()
 
-    def test_missing_collections_directory_raises(
+    def test_missing_collections_directory_is_critical(
         self, tmp_path: Path, collection_adapter: LocalCollectionAdapter, mocker: MockerFixture
     ):
-        """The collections directory itself is never skipped: its absence is raised as before (a guard)."""
+        """The collections directory itself is never skipped: its absence is critical."""
         missing = tmp_path / "collections"
         mocker.patch.object(LocalCollectionAdapter, "collections_resource", missing)
-        with pytest.raises(FileNotFoundError) as error:
+        with pytest.raises(DekerCriticalError) as error:
             list(collection_adapter)
-        assert error.value.filename == str(missing)
+        assert str(error.value) == MISSING.format(missing)
+        gc.collect()
+
+    def test_listing_error_with_the_collections_directory_in_place_is_raised_as_it_is(
+        self, collections_path: Path, collection_adapter: LocalCollectionAdapter, mocker: MockerFixture
+    ):
+        """Only a missing directory is critical: the error of the listing is not hidden otherwise."""
+        mocker.patch.object(os, "scandir", side_effect=FileNotFoundError(errno.ENOENT, "gone", str(collections_path)))
+        with pytest.raises(FileNotFoundError, match="gone"):
+            list(collection_adapter)
+
+
+class TestStorageDirectories:
+    """The adapter, built by the client when it opens, creates the collections and the trash of the storage; nobody
+    else creates them. A directory missing when it is needed is critical. Every test works on a storage of its own.
+    """
+
+    def test_adapter_creates_the_collections_and_the_trash_and_keeps_them(self, tmp_path: Path):
+        storage = tmp_path / "storage"
+        with Client(embedded_uri(storage)) as client:
+            assert client._adapter.trash_resource == storage / "trash"
+            assert sorted(path.name for path in storage.iterdir()) == ["collections", "trash"]
+            (storage / "trash" / "left").write_text("file")
+        with Client(embedded_uri(storage)):
+            assert (storage / "trash" / "left").read_text() == "file"
+
+    @pytest.mark.parametrize(
+        "call",
+        [
+            pytest.param(lambda adapter, collection: adapter.read(collection.name), id="read"),
+            pytest.param(lambda adapter, collection: adapter.is_deleted(collection), id="is_deleted"),
+            pytest.param(
+                lambda adapter, collection: adapter.delete(collection, timeout=Sentinel, token=DefaultToken()),
+                id="delete",
+            ),
+            pytest.param(
+                lambda adapter, collection: adapter.create(collection, timeout=Sentinel, token=DefaultToken()),
+                id="create",
+            ),
+            pytest.param(
+                lambda adapter, collection: adapter.clear(collection, timeout=Sentinel, token=DefaultToken()),
+                id="clear",
+            ),
+        ],
+    )
+    def test_missing_collections_directory_is_critical_and_not_created(
+        self, tmp_path: Path, array_schema: ArraySchema, mocker: MockerFixture, call
+    ):
+        storage = tmp_path / "storage"
+        collections = storage / "collections"
+        critical = mocker.patch.object(logging.getLogger("Deker"), "critical")
+        with Client(embedded_uri(storage)) as client:
+            collection = client.create_collection("gone", array_schema)
+            shutil.rmtree(collections)
+            with pytest.raises(DekerCriticalError) as error:
+                call(client._adapter, collection)
+        assert str(error.value) == MISSING.format(collections)
+        critical.assert_called_once_with(MISSING.format(collections))
+        assert not collections.exists()
+
+    def test_gone_collection_with_the_collections_directory_in_place_is_deleted(
+        self, tmp_path: Path, array_schema: ArraySchema
+    ):
+        storage = tmp_path / "storage"
+        with Client(embedded_uri(storage)) as client:
+            collection = client.create_collection("gone", array_schema)
+            assert client._adapter.is_deleted(collection) is False
+            shutil.rmtree(collection.path)
+            assert client._adapter.is_deleted(collection) is True
+
+    def test_creation_of_a_collection_never_creates_the_collections_directory(
+        self, tmp_path: Path, collection_adapter: LocalCollectionAdapter, mocker: MockerFixture
+    ):
+        missing = tmp_path / "collections"
+        mocker.patch.object(LocalCollectionAdapter, "collections_resource", missing)
+        with pytest.raises(FileNotFoundError):
+            collection_adapter._LocalCollectionAdapter__create_path("new")
+        assert not missing.exists()
+
+
+class TestEmptyTrashDirectory:
+    """The only code of the removal of the trash: everything in it is removed, the trash itself stays."""
+
+    @pytest.fixture
+    def trash(self, tmp_path: Path) -> Path:
+        """An empty trash of a storage of the test.
+
+        :param tmp_path: directory of the test
+        """
+        trash = tmp_path / "storage" / "trash"
+        trash.mkdir(parents=True)
+        return trash
+
+    @pytest.fixture
+    def outside(self, tmp_path: Path) -> Path:
+        """Targets of the symlinks in the trash: a file and a directory with a file, out of the trash.
+
+        :param tmp_path: directory of the test
+        """
+        outside = tmp_path / "outside"
+        (outside / "target-dir").mkdir(parents=True)
+        (outside / "target-dir" / "kept.txt").write_text("kept")
+        (outside / "target.txt").write_text("kept")
+        return outside
+
+    @staticmethod
+    def fill(trash: Path, outside: Path) -> None:
+        """Put into the trash what the operations leave there: files, directories and symlinks.
+
+        :param trash: the trash
+        :param outside: the targets of the symlinks
+        """
+        (trash / uuid4().hex).write_text("file")
+        nested = trash / uuid4().hex / "array_data" / "a" / "b"
+        nested.mkdir(parents=True)
+        (nested / "array.hdf5").write_text("file")
+        (nested.parent / "other.hdf5").write_text("file")
+        (trash / uuid4().hex).mkdir()
+        (trash / uuid4().hex).symlink_to(outside / "target.txt")
+        (trash / uuid4().hex).symlink_to(outside / "target-dir")
+        (nested.parent / "link").symlink_to(outside / "target-dir")
+        (nested.parent / "file-link").symlink_to(outside / "target.txt")
+
+    @staticmethod
+    def assert_targets_kept(outside: Path) -> None:
+        """The targets of the symlinks that were in the trash are untouched.
+
+        :param outside: the targets
+        """
+        assert (outside / "target.txt").read_text() == "kept"
+        assert (outside / "target-dir" / "kept.txt").read_text() == "kept"
+
+    def test_everything_is_removed_symlinks_without_their_targets(self, trash: Path, outside: Path):
+        self.fill(trash, outside)
+        assert empty_trash_directory(trash, background=False, logger=logging.getLogger("test")) is None
+        assert list(trash.iterdir()) == []
+        self.assert_targets_kept(outside)
+
+    def test_what_is_not_removed_is_counted_once_with_unique_reasons(
+        self, trash: Path, outside: Path, mocker: MockerFixture
+    ):
+        """A directory without the right to write keeps its two files and its empty directory: three are counted, the
+        directory itself is not (only its content keeps it); one more file is busy; everything else is removed.
+        """
+        self.fill(trash, outside)
+        locked = trash / "locked"
+        (locked / "empty").mkdir(parents=True)
+        (locked / "first").write_text("file")
+        (locked / "second").write_text("file")
+        (trash / "busy").write_text("file")
+        unlink = os.unlink
+
+        def busy_unlink(path, *args, **kwargs):
+            if os.path.basename(path) == "busy":
+                raise OSError(errno.EBUSY, os.strerror(errno.EBUSY), path)
+            return unlink(path, *args, **kwargs)
+
+        mocker.patch.object(os, "unlink", side_effect=busy_unlink)
+        locked.chmod(0o500)
+        try:
+            with pytest.raises(DekerTrashError) as error:
+                empty_trash_directory(trash, background=False, logger=logging.getLogger("test"))
+            assert str(error.value) == (
+                f"The trash of the storage is not emptied: 4 files are not removed from {trash}. "
+                "Reasons: Device or resource busy; Permission denied"
+            )
+            assert sorted(path.name for path in trash.iterdir()) == ["busy", "locked"]
+            assert sorted(path.name for path in locked.iterdir()) == ["empty", "first", "second"]
+            self.assert_targets_kept(outside)
+        finally:
+            locked.chmod(0o700)
+
+    def test_unreadable_trash_is_counted(self, trash: Path):
+        (trash / "left").write_text("file")
+        trash.chmod(0o300)
+        try:
+            with pytest.raises(DekerTrashError) as error:
+                empty_trash_directory(trash, background=False, logger=logging.getLogger("test"))
+        finally:
+            trash.chmod(0o700)
+        assert str(error.value) == (
+            f"The trash of the storage is not emptied: 1 files are not removed from {trash}. Reasons: Permission denied"
+        )
+
+    def test_missing_trash_is_critical_and_not_created(self, trash: Path, mocker: MockerFixture):
+        trash.rmdir()
+        critical = mocker.patch.object(logging.getLogger("Deker"), "critical")
+        with pytest.raises(DekerCriticalError) as error:
+            empty_trash_directory(trash, background=False, logger=logging.getLogger("test"))
+        assert str(error.value) == MISSING.format(trash)
+        critical.assert_called_once_with(MISSING.format(trash))
+        assert not trash.exists()
+
+    def test_two_removals_at_once_raise_nothing(self, trash: Path, outside: Path, mocker: MockerFixture):
+        """The first removal lets the second one remove everything before its own first removal of a file."""
+        self.fill(trash, outside)
+        unlink = os.unlink
+        other: list[threading.Thread] = []
+
+        def first_lets_the_other_go(path, *args, **kwargs):
+            if not other:
+                other.append(
+                    threading.Thread(
+                        target=empty_trash_directory,
+                        args=(trash,),
+                        kwargs={"background": False, "logger": logging.getLogger("test")},
+                    )
+                )
+                other[0].start()
+                other[0].join()
+            return unlink(path, *args, **kwargs)
+
+        excepthook = mocker.patch.object(threading, "excepthook")
+        mocker.patch.object(os, "unlink", side_effect=first_lets_the_other_go)
+        empty_trash_directory(trash, background=False, logger=logging.getLogger("test"))
+        excepthook.assert_not_called()
+        assert list(trash.iterdir()) == []
+        self.assert_targets_kept(outside)
+
+    def test_background_returns_while_the_removal_waits_in_a_daemon_thread_of_its_own(
+        self, trash: Path, mocker: MockerFixture
+    ):
+        (trash / "left").write_text("file")
+        walk = os.walk
+        started, go = threading.Event(), threading.Event()
+        threads: list[threading.Thread] = []
+
+        def held_walk(*args, **kwargs):
+            threads.append(threading.current_thread())
+            started.set()
+            go.wait()
+            yield from walk(*args, **kwargs)
+
+        mocker.patch.object(os, "walk", side_effect=held_walk)
+        executor = ThreadPoolExecutor(1)
+        assert empty_trash_directory(trash, background=True, logger=logging.getLogger("test")) is None
+        assert started.wait(10)
+        assert (trash / "left").exists()  # returned while the removal waits
+        (thread,) = threads
+        assert thread is not threading.current_thread()
+        assert thread.daemon
+        assert thread not in executor._threads
+        assert not thread.name.startswith("ThreadPoolExecutor")
+        go.set()
+        thread.join(10)
+        executor.shutdown()
+        assert list(trash.iterdir()) == []
+
+    @staticmethod
+    def run_in_background(trash: Path, mocker: MockerFixture) -> None:
+        """Run the removal in the background and wait for its thread.
+
+        :param trash: the trash
+        :param mocker: mocker fixture
+        """
+        walk = os.walk
+        threads: list[threading.Thread] = []
+        started = threading.Event()
+
+        def watched_walk(*args, **kwargs):
+            threads.append(threading.current_thread())
+            started.set()
+            yield from walk(*args, **kwargs)
+
+        mocker.patch.object(os, "walk", side_effect=watched_walk)
+        empty_trash_directory(trash, background=True, logger=logging.getLogger("test.trash"))
+        assert started.wait(10)
+        threads[0].join(10)
+
+    def test_error_in_the_background_goes_to_the_log(
+        self, trash: Path, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+    ):
+        locked = trash / "locked"
+        locked.mkdir()
+        (locked / "file").write_text("file")
+        excepthook = mocker.patch.object(threading, "excepthook")
+        locked.chmod(0o500)
+        try:
+            with caplog.at_level(logging.ERROR, logger="test.trash"):
+                self.run_in_background(trash, mocker)
+        finally:
+            locked.chmod(0o700)
+        excepthook.assert_not_called()
+        assert [(record.name, record.levelno, record.getMessage()) for record in caplog.records] == [
+            (
+                "test.trash",
+                logging.ERROR,
+                f"The trash of the storage is not emptied: 1 files are not removed from {trash}. "
+                "Reasons: Permission denied",
+            )
+        ]
+
+    def test_missing_trash_in_the_background_is_logged_as_critical_only(
+        self, trash: Path, mocker: MockerFixture, caplog: pytest.LogCaptureFixture
+    ):
+        trash.rmdir()
+        excepthook = mocker.patch.object(threading, "excepthook")
+        critical = mocker.patch.object(logging.getLogger("Deker"), "critical")
+        with caplog.at_level(logging.DEBUG, logger="test.trash"):
+            self.run_in_background(trash, mocker)
+        excepthook.assert_not_called()
+        critical.assert_called_once_with(MISSING.format(trash))
+        assert caplog.records == []
+        assert not trash.exists()
+
+    def test_adapter_empties_the_trash_of_its_storage(self, tmp_path: Path):
+        storage = tmp_path / "storage"
+        with Client(embedded_uri(storage)) as client:
+            (storage / "trash" / "left").write_text("file")
+            assert client._adapter.empty_trash(background=False) is None
+            assert list((storage / "trash").iterdir()) == []
+
+
+class TestIterationTellsAMissingStorageFromAMissingFile:
+    """The iteration over the collections skips a collection file gone meanwhile, unless the collections directory
+    of the storage is gone: that is critical.
+    """
+
+    @pytest.mark.parametrize(
+        "storage_gone", [pytest.param(True, id="collections gone"), pytest.param(False, id="file gone")]
+    )
+    def test_collection_file_not_found_by_the_iteration(
+        self, own_client: Client, array_schema: ArraySchema, mocker: MockerFixture, storage_gone: bool
+    ):
+        own_client.create_collection("own", array_schema)
+        adapter = own_client._adapter
+        missing = Missing(adapter.collections_resource, storage_gone)
+        mocker.patch("deker_local_adapters.collection_adapter.open", create=True, side_effect=missing)
+        check_not_found(lambda: list(adapter), missing, [])
+        gc.collect()

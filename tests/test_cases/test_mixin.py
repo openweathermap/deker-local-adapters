@@ -9,19 +9,24 @@ from concurrent.futures import TimeoutError as FutureTimeoutError
 from functools import partial
 from pathlib import Path
 from threading import Event
+from types import SimpleNamespace
 
 import pytest
 
 from cantok import DefaultToken
 from deker.arrays import Array, VArray
+from deker.client import Client
 from deker.collection import Collection
 from deker.errors import DekerFilterError, DekerInstanceNotExistsError, DekerLockError, DekerValidationError
 from deker.flock import Flock
+from deker.schemas import ArraySchema, AttributeSchema
 from deker.tools import get_paths
 from deker.tools.path import get_symlink_path
 from deker.types.private.classes import Paths
 from deker_tools.typings import Sentinel
 from pytest_mock import MockerFixture
+
+from tests.conftest import Missing, check_not_found
 
 from deker_local_adapters import LocalArrayAdapter
 from deker_local_adapters.errors import DekerBrokenSymlinkError
@@ -1042,3 +1047,144 @@ class TestCreatorChecksItsFiles:
         with pytest.raises(DekerInstanceNotExistsError) as error:
             local_array_adapter.check_symlink_existence(directory / "array.hdf5")
         assert str(error.value) == f"{directory} doesn't exist"
+
+
+STORAGE_GONE = [pytest.param(True, id="collections gone"), pytest.param(False, id="file gone")]
+
+
+class TestNotFoundTellsAMissingStorageFromAMissingFile:
+    """Every place of the common part of the adapters that does not find a file tells a missing collections
+    directory of the storage (critical) from a missing file (the answer as before).
+    """
+
+    @pytest.fixture
+    def array(self, own_client: Client, array_schema: ArraySchema) -> Array:
+        """An Array of a storage of the test's own.
+
+        :param own_client: client of the storage
+        :param array_schema: schema of the collection
+        """
+        return own_client.create_collection("own", array_schema).create()
+
+    @staticmethod
+    def files(array: Array) -> tuple[Path, Path]:
+        """The main file and the symlink of the Array.
+
+        :param array: the Array
+        :returns: the main file and the symlink
+        """
+        adapter = array._adapter
+        paths = get_paths(array, adapter.collection_path)
+        name = array.id + adapter.file_ext
+        return paths.main / name, paths.symlink / name
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_main_file_not_found_by_is_deleted(self, array: Array, storage_gone: bool):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        os.remove(self.files(array)[0])
+        missing.take_away()
+        check_not_found(lambda: adapter.is_deleted(array), missing, True)
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_symlink_not_found_by_the_deletion(self, array: Array, storage_gone: bool):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        _, symlink = self.files(array)
+        symlink.unlink()
+        missing.take_away()
+        check_not_found(lambda: adapter._delete(symlink), missing, None)
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_main_file_not_found_by_the_deletion(self, array: Array, storage_gone: bool, mocker: MockerFixture):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        _, symlink = self.files(array)
+        mocker.patch.object(os, "remove", side_effect=missing)
+        check_not_found(lambda: adapter._delete(symlink), missing, None)
+        assert not os.path.lexists(symlink) or storage_gone
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_symlink_directory_not_found_by_its_check(self, array: Array, storage_gone: bool):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        file = adapter.collection_path / adapter.symlinks_dir / "absent" / "file.hdf5"
+        missing.take_away()
+        check_not_found(lambda: adapter.check_symlink_existence(file), missing, f"{file.parent} doesn't exist")
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_symlink_directory_not_found_by_its_lock(self, array: Array, storage_gone: bool):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        directory = adapter.collection_path / adapter.symlinks_dir / "absent"
+        missing.take_away()
+        check_not_found(
+            lambda: adapter._lock_symlink_directory(directory, timeout=Sentinel, token=DefaultToken()),
+            missing,
+            f"{directory} doesn't exist",
+        )
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_directory_of_the_main_file_not_found_by_the_creation(
+        self, array: Array, storage_gone: bool, mocker: MockerFixture
+    ):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        main, symlink = self.files(array)
+        os.remove(main)
+        symlink.unlink()
+        mocker.patch.object(adapter, "_create_main_file", side_effect=missing)
+        check_not_found(
+            lambda: adapter._create_files(array, main, symlink, ()), missing, f"{main.parent} doesn't exist"
+        )
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_directory_of_the_symlink_not_found_by_the_creation(
+        self, array: Array, storage_gone: bool, mocker: MockerFixture
+    ):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        main, symlink = self.files(array)
+        os.remove(main)
+        symlink.unlink()
+        mocker.patch.object(os, "symlink", side_effect=missing)
+        check_not_found(
+            lambda: adapter._create_files(array, main, symlink, ()), missing, f"{symlink.parent} doesn't exist"
+        )
+        assert not main.exists()
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_checked_path_not_found_after_the_creation(self, array: Array, storage_gone: bool, mocker: MockerFixture):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        main, symlink = self.files(array)
+        os.remove(main)
+        symlink.unlink()
+        checked = adapter.collection_path / "absent"
+        make_symlink = os.symlink
+
+        def symlink_then_take_away(*args, **kwargs):
+            make_symlink(*args, **kwargs)
+            missing.take_away()
+
+        mocker.patch.object(os, "symlink", side_effect=symlink_then_take_away)
+        check_not_found(
+            lambda: adapter._create_files(array, main, symlink, (checked,)), missing, f"{checked} doesn't exist"
+        )
+        assert not os.path.lexists(main)
+        assert not os.path.lexists(symlink)
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_symlink_directory_of_primary_attributes_not_found_by_the_search(self, array: Array, storage_gone: bool):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        schema = SimpleNamespace(primary_attributes=(AttributeSchema(name="x", dtype=int, primary=True),))
+        missing.take_away()
+        check_not_found(lambda: adapter._symlink_by_primary_attributes({"x": 1}, schema), missing, None)
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_main_file_not_found_by_its_id(self, array: Array, storage_gone: bool):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        missing.take_away()
+        check_not_found(lambda: adapter.get_by_id(str(uuid.uuid4()), array._collection, adapter, None), missing, None)

@@ -31,6 +31,7 @@ from deker.flock import Flock
 from deker.log import SelfLoggerMixin
 from deker.tools import get_main_path, get_paths, get_symlink_path
 from deker.tools.decorators import check_ctx_state
+from deker.tools.path import check_storage_directory
 from deker.types import ArrayMeta
 from deker.types.private.typings import ArrayT
 from deker_tools.cancel import check, mark_started, resolve_timeout
@@ -102,11 +103,12 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         try:
             data = symlink.readlink()
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             return  # no symlink: nothing to delete
         try:
             os.remove(data)
-        except FileNotFoundError:
-            pass  # the main file is gone already: the symlink is removed anyway
+        except FileNotFoundError:  # the main file is gone already: the symlink is removed anyway
+            check_storage_directory(self.collection_path.parent)
         symlink.unlink(missing_ok=True)
         for file in (data, symlink):
             self._remove_empty_parents(file)
@@ -140,7 +142,10 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         """
         path = get_main_path(array.id, self.collection_path / self.data_dir) / (array.id + self.file_ext)
         # If it does not exist, then it's not created or deleted
-        return not os.path.exists(path)
+        if os.path.exists(path):
+            return False
+        check_storage_directory(self.collection_path.parent)
+        return True
 
     @check_ctx_state
     def _get_main_path_to_file(self, array: ArrayT) -> Path:
@@ -179,6 +184,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         try:
             empty = is_empty(file.parent)
         except NotADirectoryError:
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"{file.parent} doesn't exist") from None
         if not empty:
             message = f"File {file.resolve()} already exists"
@@ -222,6 +228,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
                 token=token,
             )
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"{directory} doesn't exist") from None
         if not taken:
             raise DekerLockError(f"Directory {directory} is locked for the creation of an array")
@@ -255,16 +262,19 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         except FileExistsError:
             raise DekerArrayError(f"File {main_filename.resolve()} already exists")
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"{main_filename.parent} doesn't exist") from None
         try:
             os.symlink(main_filename, sym_filename)
         except FileNotFoundError:
             main_filename.unlink(missing_ok=True)
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"{sym_filename.parent} doesn't exist") from None
         missing = [path for path in (main_filename, sym_filename, *checked) if not os.path.lexists(path)]
         if missing:
             sym_filename.unlink(missing_ok=True)
             main_filename.unlink(missing_ok=True)
+            check_storage_directory(self.collection_path.parent)
             raise DekerInstanceNotExistsError(f"{missing[0]} doesn't exist")
 
     def _create_on_disk(
@@ -348,6 +358,7 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
                     elif file.is_symlink() and not file.is_file():
                         raise DekerBrokenSymlinkError(f"Seems like {file} is a broken symlink.")
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             self.logger.debug("nothing was filtered")
         return None
 
@@ -415,6 +426,8 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
                 return self._init_array(file, collection, array_adapter, varray_adapter)
             except DekerInstanceNotExistsError:
                 return None  # the file is gone since it was found
+        check_storage_directory(self.collection_path.parent)
+        return None
 
     def __iter__(self) -> Generator[ArrayMeta, None, None]:
         """Iterate over all the arrays or varrays in collection, walking its data directory.
