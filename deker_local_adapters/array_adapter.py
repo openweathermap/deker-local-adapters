@@ -14,12 +14,13 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import json
 import os
 
 from collections.abc import Generator
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Optional, cast
 
 from cantok import AbstractToken
 from deker.ABC.base_adapters import BaseArrayAdapter
@@ -29,6 +30,7 @@ from deker.errors import DekerArrayError, DekerInstanceNotExistsError
 from deker.locks import ReadArrayLock, WriteArrayLock
 from deker.schemas import AttributeSchema
 from deker.tools import get_main_path, get_symlink_path
+from deker.tools.attributes import make_ordered_dict
 from deker.tools.decorators import check_ctx_state
 from deker.types import ArrayMeta, Data, Numeric, Slice
 from deker_tools.cancel import check, mark_started
@@ -43,6 +45,7 @@ if TYPE_CHECKING:
     from deker.ABC import BaseStorageAdapter
     from deker.ABC.base_collection import BaseCollectionOptions
     from deker.collection import Collection
+    from deker.schemas import VArraySchema
 
 
 class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
@@ -103,6 +106,27 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
         except FileNotFoundError:
             return None
 
+    def _varray_symlink(self, array: Array) -> Path:
+        """Find the symlink of the VArray of an Array by the primary attributes in the json file of the VArray.
+
+        :param array: Array of a VArray
+        :returns: path of the symlink of the VArray
+        :raises DekerInstanceNotExistsError: if the json file of the VArray does not exist
+        """
+        vid = cast("str", array._vid)
+        directory = get_main_path(vid, self.collection_path / self.ctx.config.varray_data_directory)
+        try:
+            with open(directory / f"{vid}.json", encoding="utf-8") as f:
+                meta = json.load(f)
+        except FileNotFoundError:
+            raise DekerInstanceNotExistsError(f"VArray with id={vid} doesn't exist") from None
+        schema = cast("VArraySchema", array._collection.varray_schema)
+        primary_attributes, _ = make_ordered_dict(
+            meta["primary_attributes"], meta["custom_attributes"], schema.attributes or ()
+        )
+        symlinks = self.collection_path / self.ctx.config.varray_symlinks_directory
+        return get_symlink_path(symlinks, schema.primary_attributes, primary_attributes) / f"{vid}.json"
+
     @check_ctx_state
     def create(self, array: Array, *, timeout: int | SentinelType, token: AbstractToken) -> Array:
         """Create a new array on disk storage.
@@ -113,16 +137,15 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
           ``write_lock_timeout`` of the client
         :param token: token of the write operation
         :returns: the same instance, once its files are created
-        :raises DekerArrayError: if the array file already exists or its VArray does not exist
+        :raises DekerArrayError: if the array file already exists
         :raises DekerValidationError: if an array with the same primary attributes exists
+        :raises DekerInstanceNotExistsError: if its VArray does not exist, or the collection or the VArray is deleted
+          or cleared meanwhile; what was created is removed
         """
         check(token)
-        # If the array is part of a varray, check that such varray exists
-        if array._vid:
-            varray_path = get_main_path(array._vid, Path(self.ctx.config.varray_data_directory))
-            if not (self.collection_path / varray_path).exists():
-                raise DekerArrayError(f"VArray with id={array._vid} doesn't exist")
-        return self._create_on_disk(array, timeout=timeout, token=token)
+        # an Array of a VArray is created only while the VArray exists, its symlink is checked after the creation
+        checked = (self._varray_symlink(array),) if array._vid else ()
+        return self._create_on_disk(array, timeout=timeout, token=token, checked=checked)
 
     def _create_main_file(self, array: Array, main_filename: Path) -> None:
         """Create the hdf5 file of an Array with its metadata.

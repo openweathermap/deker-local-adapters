@@ -1,6 +1,7 @@
 import errno
 import gc
 import os
+import uuid
 import warnings
 
 from concurrent.futures import ThreadPoolExecutor
@@ -14,10 +15,11 @@ import pytest
 from cantok import DefaultToken
 from deker.arrays import Array, VArray
 from deker.collection import Collection
-from deker.errors import DekerFilterError, DekerLockError, DekerValidationError
+from deker.errors import DekerFilterError, DekerInstanceNotExistsError, DekerLockError, DekerValidationError
 from deker.flock import Flock
 from deker.tools import get_paths
 from deker.tools.path import get_symlink_path
+from deker.types.private.classes import Paths
 from deker_tools.typings import Sentinel
 from pytest_mock import MockerFixture
 
@@ -429,7 +431,7 @@ class TestSymlinkDirectoryLock:
         adapter = array._adapter
         mocker.patch.object(adapter.ctx.config, "write_lock_timeout", 1)
         paths = get_paths(array, adapter.collection_path)
-        paths.create()
+        paths.create(adapter.collection_path)
         with Flock(paths.symlink), pytest.raises(DekerLockError):
             adapter.create(array, timeout=Sentinel, token=DefaultToken())
         assert os.listdir(paths.symlink) == []
@@ -693,3 +695,350 @@ class TestArrayWhoseFileIsGone:
                 (tmp_path / file.name).rename(file)
             for array in arrays:
                 array.delete()
+
+
+# --- the rules of the creators: the collection is never made again, the created files are checked afterwards ---------
+
+BEFORE_FIRST_DIRECTORY = "before the first directory"
+BETWEEN_DIRECTORY_LEVELS = "between the levels of the directory of the main file"
+BEFORE_SYMLINK_DIRECTORIES = "between the directory of the main file and the directory of the symlink"
+BEFORE_MAIN_FILE = "after the directories, before the main file"
+WHILE_MAIN_FILE_IS_WRITTEN = "while the main file is written"
+BEFORE_SYMLINK = "before the symlink"
+BEFORE_CHECK = "before the check"
+AFTER_CHECK = "after the check"
+
+CREATORS = ["array", "array_with_attributes", "varray", "varray_with_attributes"]
+
+
+class At:
+    """Hook of a creator: runs an action once, when the creator reaches the point.
+
+    :param point: point of the creator the action runs at
+    :param action: function to call
+    :param arguments: arguments of the function
+    """
+
+    def __init__(self, point: str, action, *arguments) -> None:
+        self.point = point
+        self.action = action
+        self.arguments = arguments
+        self.done = False
+
+    def __call__(self, point: str) -> None:
+        if point == self.point and not self.done:
+            self.done = True
+            self.action(*self.arguments)
+
+
+class Around:
+    """Stand for a function a creator calls on its way: tells the hook the points before and after the calls.
+
+    :param original: the real function
+    :param hook: hook of the creator
+    :param before: points told before the calls, by the number of the call from 0
+    :param after: points told after the calls, by the number of the call from 0, whatever the call ended with
+    """
+
+    def __init__(
+        self, original, hook, before: dict[int, str] | None = None, after: dict[int, str] | None = None
+    ) -> None:
+        self.original = original
+        self.hook = hook
+        self.before = before or {}
+        self.after = after or {}
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs):
+        number = self.calls
+        self.calls += 1
+        if number in self.before:
+            self.hook(self.before[number])
+        try:
+            return self.original(*args, **kwargs)
+        finally:
+            if number in self.after:
+                self.hook(self.after[number])
+
+
+def created_paths(array: Array | VArray) -> tuple[Path, Path]:
+    """Build the paths of the main file and of the symlink of a (V)Array, without touching the disk.
+
+    :param array: the (V)Array
+    :returns: the main file and the symlink
+    """
+    adapter = array._adapter
+    paths = get_paths(array, adapter.collection_path)
+    name = array.id + adapter.file_ext
+    return paths.main / name, paths.symlink / name
+
+
+def watch_creator(mocker: MockerFixture, array: Array | VArray, hook) -> None:
+    """Tell the hook every point the creator of a (V)Array reaches, by the calls it makes on its way.
+
+    :param mocker: mocker of the test: the calls are restored after it
+    :param array: the (V)Array to be created
+    :param hook: hook of the creator
+    """
+    adapter = array._adapter
+    # the levels of the directory of the main file are made first, one ``os.mkdir`` each, then those of the symlink
+    levels = len(created_paths(array)[0].parent.relative_to(adapter.collection_path).parts)
+    directories = Around(Paths.create, hook, before={0: BEFORE_FIRST_DIRECTORY})
+    mocker.patch.object(Paths, "create", autospec=True, side_effect=directories)
+    mkdir = Around(os.mkdir, hook, before={levels: BEFORE_SYMLINK_DIRECTORIES}, after={0: BETWEEN_DIRECTORY_LEVELS})
+    mocker.patch.object(os, "mkdir", side_effect=mkdir)
+    main = Around(adapter._create_main_file, hook, before={0: BEFORE_MAIN_FILE})
+    mocker.patch.object(adapter, "_create_main_file", side_effect=main)
+    written = {0: WHILE_MAIN_FILE_IS_WRITTEN}
+    if isinstance(adapter, LocalVArrayAdapter):
+        # the json file is open when its metadata is made
+        mocker.patch.object(
+            VArray, "_create_meta", autospec=True, side_effect=Around(VArray._create_meta, hook, written)
+        )
+    else:
+        # the hdf5 file is open when its metadata dataset is made
+        storage = adapter.storage_adapter
+        mocker.patch.object(
+            storage, "_create_meta_dataset", side_effect=Around(storage._create_meta_dataset, hook, written)
+        )
+    symlink = Around(os.symlink, hook, before={0: BEFORE_SYMLINK}, after={0: BEFORE_CHECK})
+    mocker.patch.object(os, "symlink", side_effect=symlink)
+    created = Around(adapter._create_on_disk, hook, after={0: AFTER_CHECK})
+    mocker.patch.object(adapter, "_create_on_disk", side_effect=created)
+
+
+class Trash:
+    """Stand for the trash of the deletion design: what is deleted leaves the collection in one rename.
+
+    :param directory: directory to move into, made here
+    """
+
+    def __init__(self, directory: Path) -> None:
+        directory.mkdir()
+        self.directory = directory
+        self.moved: list[tuple[Path, Path]] = []
+
+    def move(self, path: Path) -> None:
+        """Move a file or a directory here under a new name; a missing one is not an error.
+
+        :param path: what to move
+        """
+        target = self.directory / uuid.uuid4().hex
+        try:
+            os.rename(path, target)
+        except FileNotFoundError:
+            return
+        self.moved.append((path, target))
+
+    def clear_collection(self, collection: Path) -> None:
+        """Move every inner directory of the collection here, one rename each, as the clearing does.
+
+        :param collection: directory of the collection
+        """
+        for name in sorted(os.listdir(collection)):
+            if (collection / name).is_dir():
+                self.move(collection / name)
+
+    def delete_varray(self, varray_symlink: Path, varray_file: Path, symlinks: Path) -> None:
+        """Move a VArray here as its deletion does: its symlink, then every Array found by its symlinks, its json file.
+
+        :param varray_symlink: symlink of the VArray
+        :param varray_file: json file of the VArray
+        :param symlinks: directory of the symlinks of the Arrays of the VArray
+        """
+        self.move(varray_symlink)
+        for directory, _, names in os.walk(symlinks):
+            for name in names:
+                symlink = Path(directory) / name
+                self.move(symlink.readlink())
+                self.move(symlink)
+        self.move(varray_file)
+
+    def put_back(self, path: Path) -> None:
+        """Put what was moved from the path back, for the fixtures; whatever was made at the path meanwhile comes here.
+
+        :param path: the path
+        """
+        if os.path.lexists(path):
+            os.rename(path, self.directory / uuid.uuid4().hex)
+        for source, target in self.moved:
+            if source == path:
+                os.rename(target, path)
+                return
+
+
+def files(root: Path) -> list[str]:
+    """List the files and the symlinks under a directory, relative to it; the directories are not listed.
+
+    :param root: directory to walk
+    :returns: sorted relative paths
+    """
+    return sorted(
+        os.path.relpath(os.path.join(directory, name), root) for directory, _, names in os.walk(root) for name in names
+    )
+
+
+def gone_path(gone: str, array: Array | VArray) -> Path:
+    """Name the path an error of the creator tells about.
+
+    :param gone: ``collection``, ``data directory``, ``main directory``, ``symlink directory``, ``main file`` or
+        ``symlink``
+    :param array: the (V)Array being created
+    :returns: the path
+    """
+    adapter = array._adapter
+    main, symlink = created_paths(array)
+    paths = {
+        "collection": adapter.collection_path,
+        "data directory": adapter.collection_path / adapter.data_dir,
+        "main directory": main.parent,
+        "symlink directory": symlink.parent,
+        "main file": main,
+        "symlink": symlink,
+    }
+    return paths[gone]
+
+
+def creation_files(array: Array | VArray, created: tuple[str, ...]) -> list[str]:
+    """List the files of a collection with a (V)Array being created, relative to the collection.
+
+    :param array: the (V)Array
+    :param created: what of the (V)Array is there: ``main``, ``symlink``
+    :returns: sorted relative paths, the metadata file of the collection with them
+    """
+    collection = array._adapter.collection_path
+    main, symlink = created_paths(array)
+    paths = {"main": main, "symlink": symlink}
+    return sorted([f"{collection.name}.json", *(str(paths[name].relative_to(collection)) for name in created)])
+
+
+@pytest.mark.parametrize("array_", CREATORS)
+class TestCreatorMeetsTheDeletionOfTheCollection:
+    """Wherever the deletion of the collection comes, nothing of the creator stays among the collections."""
+
+    @pytest.mark.parametrize(
+        ("point", "gone", "moved"),
+        [
+            (BEFORE_FIRST_DIRECTORY, "collection", ()),
+            (BETWEEN_DIRECTORY_LEVELS, "data directory", ()),
+            (BEFORE_SYMLINK_DIRECTORIES, "collection", ()),
+            (BEFORE_MAIN_FILE, "main directory", ()),
+            (WHILE_MAIN_FILE_IS_WRITTEN, "symlink directory", ("main",)),
+            (BEFORE_SYMLINK, "symlink directory", ("main",)),
+            (BEFORE_CHECK, "main file", ("main", "symlink")),
+            (AFTER_CHECK, None, ("main", "symlink")),
+        ],
+    )
+    def test_creator_never_makes_the_collection_again(
+        self, array_: str, point: str, gone: str | None, moved: tuple[str, ...], request, tmp_path, mocker
+    ):
+        array = request.getfixturevalue(array_)
+        adapter = array._adapter
+        collection = adapter.collection_path
+        trash = Trash(tmp_path / "trash")
+        hook = At(point, trash.move, collection)
+        watch_creator(mocker, array, hook)
+        try:
+            if gone is None:
+                assert adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
+            else:
+                with pytest.raises(DekerInstanceNotExistsError) as error:
+                    adapter.create(array, timeout=Sentinel, token=DefaultToken())
+                assert str(error.value) == f"{gone_path(gone, array)} doesn't exist"
+            assert hook.done
+            assert not collection.exists()
+            (hidden,) = os.listdir(trash.directory)
+            assert files(trash.directory / hidden) == creation_files(array, moved)
+        finally:
+            trash.put_back(collection)
+
+
+class TestCreatorMeetsTheClearingOfTheCollection:
+    """A clearing that moves all the inner directories at one point leaves the collection whole, without leftovers."""
+
+    @pytest.mark.parametrize(
+        ("point", "gone", "kept"),
+        [
+            (BEFORE_FIRST_DIRECTORY, None, ("main", "symlink")),
+            (BETWEEN_DIRECTORY_LEVELS, "data directory", ()),
+            (BEFORE_SYMLINK_DIRECTORIES, "main directory", ()),
+            (BEFORE_MAIN_FILE, "main directory", ()),
+            (WHILE_MAIN_FILE_IS_WRITTEN, "symlink directory", ()),
+            (BEFORE_SYMLINK, "symlink directory", ()),
+            (BEFORE_CHECK, "main file", ()),
+            (AFTER_CHECK, None, ()),
+        ],
+    )
+    def test_creator_leaves_no_orphan(
+        self, array: Array, point: str, gone: str | None, kept: tuple[str, ...], tmp_path, mocker
+    ):
+        adapter = array._adapter
+        collection = adapter.collection_path
+        old = Array(array._Array__collection, adapter)
+        adapter.create(old, timeout=Sentinel, token=DefaultToken())
+        trash = Trash(tmp_path / "trash")
+        hook = At(point, trash.clear_collection, collection)
+        watch_creator(mocker, array, hook)
+        if gone is None:
+            assert adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
+        else:
+            with pytest.raises(DekerInstanceNotExistsError) as error:
+                adapter.create(array, timeout=Sentinel, token=DefaultToken())
+            assert str(error.value) == f"{gone_path(gone, array)} doesn't exist"
+        assert hook.done
+        assert files(collection) == creation_files(array, kept)
+        # the old Array is moved away with the clearing: its main file and its symlink
+        assert sum(name.endswith(old.id + adapter.file_ext) for name in files(trash.directory)) == 2
+
+
+class TestCreatorChecksItsFiles:
+    """The creator checks its files after it made them, removes what it made if one is gone and tells so."""
+
+    @pytest.mark.parametrize("array_", CREATORS)
+    @pytest.mark.parametrize(("gone", "other"), [("main file", "symlink"), ("symlink", "main file")])
+    def test_file_gone_before_the_check_takes_the_other_away(
+        self, array_: str, gone: str, other: str, request, tmp_path, mocker
+    ):
+        array = request.getfixturevalue(array_)
+        adapter = array._adapter
+        trash = Trash(tmp_path / "trash")
+        hook = At(BEFORE_CHECK, trash.move, gone_path(gone, array))
+        watch_creator(mocker, array, hook)
+        with pytest.raises(DekerInstanceNotExistsError) as error:
+            adapter.create(array, timeout=Sentinel, token=DefaultToken())
+        assert str(error.value) == f"{gone_path(gone, array)} doesn't exist"
+        assert hook.done
+        assert not os.path.lexists(gone_path(other, array))
+        assert len(os.listdir(trash.directory)) == 1
+
+    @pytest.mark.parametrize("array_", CREATORS)
+    def test_created_files_pass_the_check(self, array_: str, request, mocker):
+        """Guard against a false rollback: a (V)Array without primary attributes keeps its symlink in the root of the
+        symlinks directory, one with them in the directory of their values; both pass the check."""
+        array = request.getfixturevalue(array_)
+        adapter = array._adapter
+        main, symlink = created_paths(array)
+        unlink = mocker.spy(Path, "unlink")
+        assert adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
+        assert main.is_file()
+        assert symlink.is_symlink()
+        assert symlink.resolve() == main
+        root = adapter.collection_path / adapter.symlinks_dir
+        assert (symlink.parent == root) is (not array.primary_attributes)
+        unlink.assert_not_called()
+
+    def test_symlink_directory_gone_before_its_lock_is_not_existing(
+        self, local_array_adapter: LocalArrayAdapter, tmp_path
+    ):
+        directory = tmp_path / "gone"
+        with pytest.raises(DekerInstanceNotExistsError) as error:
+            local_array_adapter._lock_symlink_directory(directory, timeout=Sentinel, token=DefaultToken())
+        assert str(error.value) == f"{directory} doesn't exist"
+
+    def test_symlink_directory_gone_before_its_check_is_not_existing(
+        self, local_array_adapter: LocalArrayAdapter, tmp_path
+    ):
+        directory = tmp_path / "gone"
+        with pytest.raises(DekerInstanceNotExistsError) as error:
+            local_array_adapter.check_symlink_existence(directory / "array.hdf5")
+        assert str(error.value) == f"{directory} doesn't exist"

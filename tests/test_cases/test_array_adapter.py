@@ -3,6 +3,7 @@ import os
 import threading
 import time
 
+from collections.abc import Iterator
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
@@ -26,13 +27,28 @@ from deker.errors import (
     DekerValidationError,
 )
 from deker.flock import Flock
-from deker.schemas import ArraySchema, DimensionSchema
+from deker.schemas import ArraySchema, AttributeSchema, DimensionSchema, VArraySchema
 from deker.tools import get_paths
 from deker_tools.cancel import TokenCancelledError, cancellation_scope, read_token, write_token
 from deker_tools.typings import Sentinel
 from pytest_mock import MockerFixture
 
 from tests.parameters.index_exp_params import valid_index_exp_params
+from tests.test_cases.test_mixin import (
+    AFTER_CHECK,
+    BEFORE_CHECK,
+    BEFORE_FIRST_DIRECTORY,
+    BEFORE_MAIN_FILE,
+    BEFORE_SYMLINK,
+    BEFORE_SYMLINK_DIRECTORIES,
+    BETWEEN_DIRECTORY_LEVELS,
+    WHILE_MAIN_FILE_IS_WRITTEN,
+    At,
+    Trash,
+    created_paths,
+    files,
+    watch_creator,
+)
 
 from deker_local_adapters import AdaptersFactory, LocalArrayAdapter
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
@@ -93,7 +109,7 @@ class TestArrayAdapter:
         """
         coll_path = root_path / factory.ctx.config.collections_directory / array.collection
         paths = get_paths(array, coll_path)
-        paths.create()
+        paths.create(coll_path)
         filename = str(array.id) + factory.ctx.storage_adapter.file_ext
         file_path = paths.main / filename
         file_path.write_text("foreign")
@@ -440,7 +456,7 @@ class TestArrayAdapter:
 
     def test_array_raises_varray_error(self, varray_collection: Collection):
         _id = str(uuid4())
-        with pytest.raises(DekerArrayError) as e:
+        with pytest.raises(DekerInstanceNotExistsError) as e:
             varray_collection.arrays.create({"vid": _id, "v_position": (0, 0, 0)})
 
         assert f"VArray with id={_id} doesn't exist" == str(e.value)
@@ -798,3 +814,108 @@ class TestArrayAdapterOfAFileGone:
             call(adapter, inserted_array, timeout=Sentinel, token=DefaultToken())
         assert type(error.value) is OSError
         assert "file signature not found" in str(error.value)
+
+
+# --- the creator of an Array of a VArray checks the VArray: its json file before, its symlink after -------------------
+
+VARRAY_KINDS = {
+    "no primary attributes": ({}, []),
+    "an int primary attribute": ({"number": 3}, [AttributeSchema(name="number", dtype=int, primary=True)]),
+    # the path of the symlink takes the iso form of a datetime, the json file keeps its serialized form
+    "a datetime primary attribute": (
+        {"time": datetime(2026, 11, 27, 20, 38, 1, 5, tzinfo=timezone.utc)},
+        [AttributeSchema(name="time", dtype=datetime, primary=True)],
+    ),
+}
+
+
+@pytest.fixture(params=list(VARRAY_KINDS))
+def created_varray(request, client: Client) -> Iterator[VArray]:
+    """Create a VArray of one Array position in a collection of its own; the collection is deleted afterwards."""
+    primary_attributes, attributes = VARRAY_KINDS[request.param]
+    schema = VArraySchema(dimensions=[DimensionSchema(name="x", size=4)], dtype=float, vgrid=[2], attributes=attributes)
+    collection = client.create_collection(f"v{uuid4().hex}", schema=schema)
+    yield collection.create(primary_attributes=primary_attributes)
+    collection.delete()
+
+
+def inner_array(varray: VArray) -> Array:
+    """Make the first Array of a VArray, not created yet.
+
+    :param varray: the VArray
+    :returns: the Array at the first position
+    """
+    return Array(
+        varray._VArray__collection,
+        varray._VArray__array_adapter,
+        primary_attributes={"vid": varray.id, "v_position": (0,)},
+    )
+
+
+class TestCreatorOfAnArrayOfAVArray:
+    """An Array of a deleted VArray is never left: the creator looks at the VArray before and after it creates."""
+
+    @pytest.mark.parametrize(
+        ("point", "gone", "moved"),
+        [
+            (BEFORE_FIRST_DIRECTORY, "varray symlink", 2),
+            (BETWEEN_DIRECTORY_LEVELS, "varray symlink", 2),
+            (BEFORE_SYMLINK_DIRECTORIES, "varray symlink", 2),
+            (BEFORE_MAIN_FILE, "varray symlink", 2),
+            (WHILE_MAIN_FILE_IS_WRITTEN, "varray symlink", 2),
+            (BEFORE_SYMLINK, "varray symlink", 2),
+            (BEFORE_CHECK, "main file", 4),
+            (AFTER_CHECK, None, 4),
+        ],
+    )
+    def test_creator_meets_the_deletion_of_its_varray(
+        self, created_varray: VArray, point: str, gone: str | None, moved: int, tmp_path, mocker
+    ):
+        array = inner_array(created_varray)
+        adapter = array._adapter
+        collection = adapter.collection_path
+        varray_file, varray_symlink = created_paths(created_varray)
+        trash = Trash(tmp_path / "trash")
+        symlinks = collection / adapter.symlinks_dir / created_varray.id
+        hook = At(point, trash.delete_varray, varray_symlink, varray_file, symlinks)
+        watch_creator(mocker, array, hook)
+        if gone is None:
+            assert adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
+        else:
+            with pytest.raises(DekerInstanceNotExistsError) as error:
+                adapter.create(array, timeout=Sentinel, token=DefaultToken())
+            path = varray_symlink if gone == "varray symlink" else created_paths(array)[0]
+            assert str(error.value) == f"{path} doesn't exist"
+        assert hook.done
+        assert files(collection) == [f"{collection.name}.json"]  # no file of the VArray or of its Arrays is left
+        assert len(files(trash.directory)) == moved
+
+    def test_symlink_of_the_varray_is_found_by_its_json_file(self, created_varray: VArray):
+        """Guard against a false rollback: the path is built the way the VArray built it, from the json file."""
+        array = inner_array(created_varray)
+        assert array._adapter._varray_symlink(array) == created_paths(created_varray)[1]
+
+    def test_created_array_passes_the_check(self, created_varray: VArray, mocker):
+        """Guard against a false rollback: an Array of a living VArray is created and kept."""
+        array = inner_array(created_varray)
+        main, symlink = created_paths(array)
+        unlink = mocker.spy(Path, "unlink")
+        assert array._adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
+        assert main.is_file()
+        assert symlink.resolve() == main
+        unlink.assert_not_called()
+
+    def test_varray_whose_file_is_gone_is_not_existing(self, created_varray: VArray, tmp_path):
+        """The directory of the json file stays: the VArray does not exist anyway, and nothing is created."""
+        array = inner_array(created_varray)
+        varray_file = created_paths(created_varray)[0]
+        trash = Trash(tmp_path / "trash")
+        trash.move(varray_file)
+        try:
+            with pytest.raises(DekerInstanceNotExistsError) as error:
+                array._adapter.create(array, timeout=Sentinel, token=DefaultToken())
+            assert str(error.value) == f"VArray with id={created_varray.id} doesn't exist"
+            assert varray_file.parent.is_dir()
+            assert not created_paths(array)[0].exists()
+        finally:
+            trash.put_back(varray_file)

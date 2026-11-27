@@ -153,16 +153,17 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         file = array.id + self.file_ext
         return paths.main / file
 
-    def get_filenames_for_create_methods(self, array: ArrayT) -> tuple[Path, Path]:
-        """Return paths to the main file and symlink, creating their directories.
+    def _get_filenames_for_create_methods(self, array: ArrayT) -> tuple[Path, Path]:
+        """Return paths to the main file and symlink, creating their directories inside the collection.
 
         !!! DO NOT USE THIS METHOD ANYWHERE EXCEPT adapter.create !!!!
 
         :param array: Array or VArray
         :returns: paths to the main file and to its symlink
+        :raises DekerInstanceNotExistsError: if the directory of the collection, or a level above, is gone
         """
         paths = get_paths(array, self.collection_path)
-        paths.create()
+        paths.create(self.collection_path)
         file = array.id + self.file_ext
         main_filename = paths.main / file
         sym_filename = paths.symlink / file
@@ -173,8 +174,13 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
 
         :param file: Path to symlink
         :raises DekerValidationError: if a (V)Array with the same primary attributes exists
+        :raises DekerInstanceNotExistsError: if the symlink directory is gone
         """
-        if not is_empty(file.parent):
+        try:
+            empty = is_empty(file.parent)
+        except NotADirectoryError:
+            raise DekerInstanceNotExistsError(f"{file.parent} doesn't exist") from None
+        if not empty:
             message = f"File {file.resolve()} already exists"
             self.logger.warning(message)
             raise DekerValidationError(message)
@@ -204,15 +210,20 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         :param token: token of the write operation
         :returns: the held flock, to be released by the caller
         :raises DekerLockError: if the directory is not released within the timeout
+        :raises DekerInstanceNotExistsError: if the directory is gone
         """
         flock = Flock(directory)
-        if not wait_for_unlock(
-            self._try_lock,
-            (flock,),
-            timeout=resolve_timeout(timeout, self.ctx.config.write_lock_timeout),
-            interval=self.SYMLINK_DIRECTORY_LOCK_INTERVAL,
-            token=token,
-        ):
+        try:
+            taken = wait_for_unlock(
+                self._try_lock,
+                (flock,),
+                timeout=resolve_timeout(timeout, self.ctx.config.write_lock_timeout),
+                interval=self.SYMLINK_DIRECTORY_LOCK_INTERVAL,
+                token=token,
+            )
+        except FileNotFoundError:
+            raise DekerInstanceNotExistsError(f"{directory} doesn't exist") from None
+        if not taken:
             raise DekerLockError(f"Directory {directory} is locked for the creation of an array")
         return flock
 
@@ -226,40 +237,61 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         """
         pass
 
-    def _create_files(self, array: ArrayT, main_filename: Path, sym_filename: Path) -> None:
-        """Create the main file of a (V)Array and the symlink to it.
+    def _create_files(self, array: ArrayT, main_filename: Path, sym_filename: Path, checked: tuple[Path, ...]) -> None:
+        """Create the main file of a (V)Array and the symlink to it, then check that they are there.
+
+        A path gone meanwhile means that the collection (or the VArray of an Array) was deleted or cleared:
+        the created main file and symlink are removed, and the (V)Array does not exist.
 
         :param array: Array or VArray
         :param main_filename: path to the main file
         :param sym_filename: path to the symlink
+        :param checked: other paths that shall be there after the creation: the symlink of the VArray of an Array
         :raises DekerArrayError: if the main file already exists
+        :raises DekerInstanceNotExistsError: if a directory of the files or a checked path is gone
         """
         try:
             self._create_main_file(array, main_filename)
         except FileExistsError:
             raise DekerArrayError(f"File {main_filename.resolve()} already exists")
-        os.symlink(main_filename, sym_filename)
+        except FileNotFoundError:
+            raise DekerInstanceNotExistsError(f"{main_filename.parent} doesn't exist") from None
+        try:
+            os.symlink(main_filename, sym_filename)
+        except FileNotFoundError:
+            main_filename.unlink(missing_ok=True)
+            raise DekerInstanceNotExistsError(f"{sym_filename.parent} doesn't exist") from None
+        missing = [path for path in (main_filename, sym_filename, *checked) if not os.path.lexists(path)]
+        if missing:
+            sym_filename.unlink(missing_ok=True)
+            main_filename.unlink(missing_ok=True)
+            raise DekerInstanceNotExistsError(f"{missing[0]} doesn't exist")
 
-    def _create_on_disk(self, array: ArrayT, *, timeout: int | SentinelType, token: AbstractToken) -> ArrayT:
+    def _create_on_disk(
+        self, array: ArrayT, *, timeout: int | SentinelType, token: AbstractToken, checked: tuple[Path, ...] = ()
+    ) -> ArrayT:
         """Create the files of a (V)Array, holding the symlink directory of its primary attributes meanwhile.
 
         :param array: Array or VArray
         :param timeout: seconds to wait for the symlink directory; ``Sentinel`` - ``write_lock_timeout`` of the client
         :param token: token of the write operation
+        :param checked: other paths that shall be there after the creation: the symlink of the VArray of an Array
         :returns: the same instance, once its files are created
         :raises DekerValidationError: if a (V)Array with the same primary attributes exists
         :raises DekerArrayError: if the main file already exists
+        :raises DekerInstanceNotExistsError: if the collection (or the VArray of an Array) is deleted or cleared
+          meanwhile; what was created is removed
         """
-        main_filename, sym_filename = self.get_filenames_for_create_methods(array)
+        main_filename, sym_filename = self._get_filenames_for_create_methods(array)
         if not array.primary_attributes:
             mark_started(token)
-            self._create_files(array, main_filename, sym_filename)
+            self._create_files(array, main_filename, sym_filename, checked)
             return array
         directory_lock = self._lock_symlink_directory(sym_filename.parent, timeout=timeout, token=token)
         try:
             self.check_symlink_existence(sym_filename)
             mark_started(token)
-            self._create_files(array, main_filename, sym_filename)
+            self._create_files(array, main_filename, sym_filename, checked)
         finally:
             directory_lock.release()
         return array
