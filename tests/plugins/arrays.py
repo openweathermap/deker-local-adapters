@@ -14,7 +14,7 @@ from deker_local_adapters.factory import AdaptersFactory
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 
-@pytest.fixture()
+@pytest.fixture
 def array(array_collection: Collection, factory) -> Array:
     """Returns an instance of Array.
 
@@ -24,7 +24,7 @@ def array(array_collection: Collection, factory) -> Array:
     return Array(array_collection, factory.get_array_adapter(array_collection.path, HDF5StorageAdapter))
 
 
-@pytest.fixture()
+@pytest.fixture
 def array_data(array_schema: ArraySchema) -> np.ndarray:
     """Returns array data.
 
@@ -33,7 +33,7 @@ def array_data(array_schema: ArraySchema) -> np.ndarray:
     return np.asarray(range(10 * 10 * 10), dtype=array_schema.dtype).reshape(array_schema.shape)
 
 
-@pytest.fixture()
+@pytest.fixture
 def array_with_attributes(
     array_collection_with_attributes: Collection,
     factory: AdaptersFactory,
@@ -51,7 +51,7 @@ def array_with_attributes(
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def inserted_array(array_collection: Collection, array_data: np.ndarray) -> Array:
     """Returns an instance of Array with data initialized in file.
 
@@ -67,7 +67,7 @@ def inserted_array(array_collection: Collection, array_data: np.ndarray) -> Arra
         pass
 
 
-@pytest.fixture()
+@pytest.fixture
 def inserted_array_with_attributes(array_collection_with_attributes: Collection, array_data: np.ndarray) -> Array:
     """Returns an instance of Array with data initialized in file and attributes.
 
@@ -88,7 +88,7 @@ def inserted_array_with_attributes(array_collection_with_attributes: Collection,
     array.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def varray(varray_collection: Collection, factory) -> VArray:
     """Returns an instance of VArray."""
     return VArray(
@@ -101,7 +101,7 @@ def varray(varray_collection: Collection, factory) -> VArray:
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def varray_with_attributes(
     varray_collection_with_attributes: Collection,
     factory: AdaptersFactory,
@@ -120,7 +120,7 @@ def varray_with_attributes(
     )
 
 
-@pytest.fixture()
+@pytest.fixture
 def inserted_varray(varray_collection: Collection, array_data: np.ndarray) -> VArray:
     """Returns an instance of VArray with data initialized in file.
 
@@ -133,7 +133,7 @@ def inserted_varray(varray_collection: Collection, array_data: np.ndarray) -> VA
     varray.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def inserted_varray_with_attributes(varray_collection_with_attributes: Collection, array_data: np.ndarray) -> VArray:
     """Returns an instance of VArray with data initialized in file and attributes.
 
@@ -154,7 +154,7 @@ def inserted_varray_with_attributes(varray_collection_with_attributes: Collectio
     array.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def scaled_array(scaled_collection) -> Array:
     """Creates Array with regular scale description and data."""
     data = np.random.random(scaled_collection.array_schema.shape)
@@ -164,7 +164,7 @@ def scaled_array(scaled_collection) -> Array:
     array.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def timed_array(timed_collection) -> Array:
     """Creates Array with time dimensions and data."""
     data = np.random.random(timed_collection.array_schema.shape)
@@ -174,7 +174,7 @@ def timed_array(timed_collection) -> Array:
     array.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def scaled_varray(scaled_varray_collection) -> VArray:
     """Creates VArray with regular scale description and data."""
     data = np.random.random(scaled_varray_collection.varray_schema.shape)
@@ -184,7 +184,7 @@ def scaled_varray(scaled_varray_collection) -> VArray:
     array.delete()
 
 
-@pytest.fixture()
+@pytest.fixture
 def timed_varray(timed_varray_collection) -> VArray:
     """Creates VArray with time dimensions and data."""
     data = np.random.random(timed_varray_collection.varray_schema.shape)

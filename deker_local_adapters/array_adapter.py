@@ -1,5 +1,5 @@
 # deker-local-adapters - local filesystem HDF5 storage for deker
-# Copyright (C) 2023  OpenWeather
+# Copyright (C) 2023-2026  Openweather Ltd.
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU General Public License as published by
@@ -14,22 +14,27 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-import logging
+import json
 import os
 
+from collections.abc import Generator
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Generator, Optional, Tuple, Type, Union
+from typing import TYPE_CHECKING, Optional, cast
 
+from cantok import AbstractToken
 from deker.ABC.base_adapters import BaseArrayAdapter
 from deker.arrays import Array
 from deker.ctx import CTX
-from deker.errors import DekerArrayError
+from deker.errors import DekerArrayError, DekerInstanceNotExistsError
 from deker.locks import ReadArrayLock, WriteArrayLock
-from deker.log import SelfLoggerMixin
 from deker.schemas import AttributeSchema
 from deker.tools import get_main_path, get_symlink_path
+from deker.tools.attributes import make_ordered_dict
 from deker.tools.decorators import check_ctx_state
-from deker.types import ArrayMeta, Numeric, Slice
+from deker.tools.path import check_storage_directory
+from deker.types import ArrayMeta, Data, Numeric, Slice
+from deker_tools.cancel import check, mark_started
+from deker_tools.typings import SentinelType
 from numpy import ndarray
 
 from deker_local_adapters.mixin import LocalAdapterMixin
@@ -40,19 +45,33 @@ if TYPE_CHECKING:
     from deker.ABC import BaseStorageAdapter
     from deker.ABC.base_collection import BaseCollectionOptions
     from deker.collection import Collection
+    from deker.schemas import VArraySchema
 
 
-class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
-    """Default adapter for managing Array instances."""
+class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
+    """Adapter of the ``Arrays`` of a collection on the local disk.
+
+    An ``Array`` is a main file in the data directory, named by its id, and a symlink to it in the symlinks
+    directory, placed by its primary attributes. The reads hold a shared lock on the main file, the writes,
+    the clears and the attribute updates an exclusive one; the deletion takes no lock.
+    """
 
     def __init__(
         self,
         collection_path: Path,
         ctx: "CTX",
-        storage_adapter: Type["BaseStorageAdapter"],
+        storage_adapter: type["BaseStorageAdapter"],
         executor: "ThreadPoolExecutor",
         collection_options: Optional["BaseCollectionOptions"] = None,
     ) -> None:
+        """LocalArrayAdapter constructor.
+
+        :param collection_path: directory of the collection
+        :param ctx: context of the client
+        :param storage_adapter: type of the adapter of the files
+        :param executor: thread pool the Arrays of a VArray are processed in
+        :param collection_options: chunking and compression options of the collection
+        """
         self.collection_options = collection_options
         self.data_dir = ctx.config.array_data_directory
         self.symlinks_dir = ctx.config.array_symlinks_directory
@@ -64,9 +83,16 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
     def _get_symlink_filename(
         self,
         vid: str,
-        vpos: Tuple[int, ...],
-        array_primary_attributes_schema: Tuple[AttributeSchema, ...],
-    ) -> Optional[Path]:
+        vpos: tuple[int, ...],
+        array_primary_attributes_schema: tuple[AttributeSchema, ...],
+    ) -> Path | None:
+        """Find the symlink of the Array of a VArray at a position.
+
+        :param vid: id of the VArray
+        :param vpos: ``v_position`` of the Array in the ``vgrid``
+        :param array_primary_attributes_schema: schemas of the primary attributes of the Arrays
+        :returns: the symlink, ``None`` if there is no Array at the position
+        """
         sympath_to_dir = get_symlink_path(
             self.collection_path / self.symlinks_dir,
             array_primary_attributes_schema,
@@ -78,129 +104,215 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
                 # just one file is expected inside the list
                 return files[0]
         except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
             return None
 
+    def _varray_symlink(self, array: Array) -> Path:
+        """Find the symlink of the VArray of an Array by the primary attributes in the json file of the VArray.
+
+        :param array: Array of a VArray
+        :returns: path of the symlink of the VArray
+        :raises DekerInstanceNotExistsError: if the json file of the VArray does not exist
+        """
+        vid = cast("str", array._vid)
+        directory = get_main_path(vid, self.collection_path / self.ctx.config.varray_data_directory)
+        try:
+            with open(directory / f"{vid}.json", encoding="utf-8") as f:
+                meta = json.load(f)
+        except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
+            raise DekerInstanceNotExistsError(f"VArray with id={vid} doesn't exist") from None
+        schema = cast("VArraySchema", array._collection.varray_schema)
+        primary_attributes, _ = make_ordered_dict(
+            meta["primary_attributes"], meta["custom_attributes"], schema.attributes or ()
+        )
+        symlinks = self.collection_path / self.ctx.config.varray_symlinks_directory
+        return get_symlink_path(symlinks, schema.primary_attributes, primary_attributes) / f"{vid}.json"
+
     @check_ctx_state
-    def create(self, array: Array) -> None:
+    def create(self, array: Array, *, timeout: int | SentinelType, token: AbstractToken) -> Array:
         """Create a new array on disk storage.
 
         :param array: Array instance
+        :param timeout: seconds to wait for the symlink directory of the primary attributes, as the call gave them;
+          ``Sentinel`` -
+          ``write_lock_timeout`` of the client
+        :param token: token of the write operation
+        :returns: the same instance, once its files are created
+        :raises DekerArrayError: if the array file already exists
+        :raises DekerValidationError: if an array with the same primary attributes exists
+        :raises DekerInstanceNotExistsError: if its VArray does not exist, or the collection or the VArray is deleted
+          or cleared meanwhile; what was created is removed
         """
-        main_filename, sym_filename = self.get_filenames_for_create_methods(array)
-        self.check_array_file_existence(main_filename)
+        check(token)
+        # an Array of a VArray is created only while the VArray exists, its symlink is checked after the creation
+        checked = (self._varray_symlink(array),) if array._vid else ()
+        return self._create_on_disk(array, timeout=timeout, token=token, checked=checked)
 
-        # If the array is part of a varray, check that such varray exists
-        if array._vid:
-            varray_path = get_main_path(array._vid, Path(self.ctx.config.varray_data_directory))
-            if not (self.collection_path / varray_path).exists():
-                raise DekerArrayError(f"VArray with id={array._vid} doesn't exist")
+    def _create_main_file(self, array: Array, main_filename: Path) -> None:
+        """Create the hdf5 file of an Array with its metadata.
 
-        # Check that there is no array with the given primary attributes.
-        if array.primary_attributes:
-            self.check_symlink_existence(sym_filename)
-
-        # Create meta for the array
-        array_meta = array._create_meta()
-        # Create the array (write to disk)
-        self.storage_adapter.create(
-            main_filename,
-            array.shape,
-            array_meta,
-        )
-        # Create symlink
-        os.symlink(main_filename, sym_filename)
+        :param array: Array instance
+        :param main_filename: path to the hdf5 file
+        :raises FileExistsError: if the file already exists
+        """
+        self.storage_adapter.create(main_filename, array.shape, array._create_meta())
 
     @check_ctx_state
     @ReadArrayLock()
-    def read_data(self, array: Array, bounds: Slice) -> Union[Numeric, ndarray]:
-        """Read data from the existing array.
+    def read_data(
+        self, array: Array, bounds: Slice, *, timeout: int | SentinelType, token: AbstractToken
+    ) -> Numeric | ndarray:
+        """Read data from the existing array, holding its file shared.
+
+        The data read are not returned if the read was cancelled while the file was read.
 
         :param array: Array instance
         :param bounds: array bounds to read
+        :param timeout: seconds of the read as the call gave them; taken for the common signature of the adapters
+          and not used here: the read lock of the method (``ReadArrayLock``) does not wait, a writer refuses it at
+          once, and the limit of the read comes with the token
+        :param token: token of the read operation
+        :returns: data within the bounds; a scalar for a single cell
+        :raises DekerLockError: if a writer holds the file
+        :raises DekerInstanceNotExistsError: if the file is gone
         """
+        check(token)
         filename = self._get_main_path_to_file(array)
-
-        return self.storage_adapter.read_data(filename, array.shape, bounds, array.fill_value, array.dtype)
+        try:
+            data = self.storage_adapter.read_data(filename, array.shape, bounds, array.fill_value, array.dtype)
+        except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
+            raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
+        check(token)
+        return data
 
     @check_ctx_state
     @ReadArrayLock()
-    def read_meta(self, array: Union[Array, Path]) -> ArrayMeta:
-        """Read array metadata.
+    def read_meta(self, array: Array | Path) -> ArrayMeta:
+        """Read array metadata, holding its file shared.
 
-        :param array: Array instance
+        :param array: Array instance or the path to its main file
+        :returns: array metadata
+        :raises DekerLockError: if a writer holds the file
+        :raises DekerInstanceNotExistsError: if the file is gone
         """
-        if isinstance(array, Array):
-            filename = self._get_main_path_to_file(array)
-        else:
-            filename = array
+        filename = array if isinstance(array, Path) else self._get_main_path_to_file(array)
 
-        result = self.storage_adapter.read_meta(filename)
+        try:
+            result = self.storage_adapter.read_meta(filename)
+        except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
+            raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
         return result
 
     @check_ctx_state
     @WriteArrayLock()
-    def update(self, array: Array, bounds: Slice, data: Any) -> None:  # type: ignore
-        """Update data in the existing array.
+    def update(
+        self, array: Array, bounds: Slice, data: Data, *, timeout: int | SentinelType, token: AbstractToken
+    ) -> None:
+        """Update data in the existing array, holding its file exclusively.
 
         :param array: Array instance
         :param bounds: array bounds to be updated
-        :param data: np.ndarray with array data
+        :param data: new data of the shape of the bounds, or a number that fills them
+        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``WriteArrayLock``), not
+          by its body: the lock waits for the readers and the writer of the file no longer than that
+        :param token: token of the write operation
+        :raises DekerArrayError: if the data is ``None``
+        :raises DekerArrayTypeError: if the data does not fit the dtype of the array
+        :raises IndexError: if the data does not fit the shape of the bounds
+        :raises DekerLockError: if the file is not released within the write lock timeout
+        :raises DekerInstanceNotExistsError: if the file is gone
         """
+        check(token)
         filename = self._get_main_path_to_file(array)
 
         if data is None:
-            raise ValueError("Updating data shall not be None")
-        data = self._process_data(array.dtype, array.shape, data, bounds)  # type: ignore
-        self.storage_adapter.update_data(
-            filename,
-            bounds,
-            data,
-            array.dtype,
-            array.shape,
-            array.fill_value,
-            self.collection_options,
-        )
+            raise DekerArrayError("Updating data shall not be None")
+        data = self._process_data(array.dtype, array.shape, data, bounds)
+        mark_started(token)
+        try:
+            self.storage_adapter.update_data(
+                filename,
+                bounds,
+                data,
+                array.dtype,
+                array.shape,
+                array.fill_value,
+                self.collection_options,
+            )
+        except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
+            raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
 
     @check_ctx_state
     @WriteArrayLock()
-    def update_meta_custom_attributes(self, array: Array, attributes: dict) -> None:
-        """Update metadata in the existing array.
+    def update_meta_custom_attributes(
+        self, array: Array, attributes: dict, *, timeout: int | SentinelType, token: AbstractToken
+    ) -> None:
+        """Replace the custom attributes in the file of the array, holding it exclusively, and in the object.
 
         :param array: Array instance
         :param attributes: new custom attributes
+        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``WriteArrayLock``), not
+          by its body: the lock waits for the readers and the writer of the file no longer than that
+        :param token: token of the write operation
+        :raises DekerLockError: if the file is not released within the write lock timeout
+        :raises DekerInstanceNotExistsError: if the file is gone
         """
+        check(token)
         filename = self._get_main_path_to_file(array)
 
+        mark_started(token)
         try:
             array.custom_attributes = self.storage_adapter.update_meta_custom_attributes(
                 filename,
                 attributes,
             )
+        except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
+            raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
         except Exception as e:
-            logging.exception(e)
+            self.logger.exception(e)
             raise e
 
     @check_ctx_state
     @WriteArrayLock()
-    def clear(self, array: Array, bounds: Slice) -> None:
-        """Clear data in the existing array.
+    def clear(self, array: Array, bounds: Slice, *, timeout: int | SentinelType, token: AbstractToken) -> None:
+        """Set the cells within the bounds to the fill value, holding the file exclusively.
 
         :param array: Array instance
-        :param bounds: array bounds to update
+        :param bounds: array bounds to clear
+        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``WriteArrayLock``), not
+          by its body: the lock waits for the readers and the writer of the file no longer than that
+        :param token: token of the write operation
+        :raises DekerLockError: if the file is not released within the write lock timeout
+        :raises DekerInstanceNotExistsError: if the file is gone
         """
+        check(token)
         filename = self._get_main_path_to_file(array)
-        self.storage_adapter.clear_data(
-            filename,
-            array.shape,
-            bounds,
-            array.fill_value,
-        )
+        mark_started(token)
+        try:
+            self.storage_adapter.clear_data(
+                filename,
+                array.shape,
+                bounds,
+                array.fill_value,
+            )
+        except FileNotFoundError:
+            check_storage_directory(self.collection_path.parent)
+            raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
 
     @check_ctx_state
     def _adapter_iter(self, vid: str) -> Generator[Path, None, None]:
         """Iterate over all the Arrays symlinks in VArray.
 
         :param vid: Array vid attribute value
+        :yields: paths to the Arrays symlinks
         """
         root_path = self.collection_path / self.symlinks_dir / vid
         for root, _, files in os.walk(root_path):
@@ -210,21 +322,23 @@ class LocalArrayAdapter(SelfLoggerMixin, LocalAdapterMixin, BaseArrayAdapter):
                     yield symlink
 
     @check_ctx_state
-    def delete_all_by_vid(self, vid: str, collection: "Collection") -> None:
-        """Delete all arrays of VArray.
+    def delete_all_by_vid(self, vid: str, collection: "Collection", *, token: AbstractToken) -> None:
+        """Move every Array of a VArray to the trash, one after another, taking no lock; the trash is not emptied.
+
+        The Arrays are found by their symlinks in the directory of the VArray id and by the targets of the symlinks,
+        without reading their metadata. Once one Array is started, every Array is moved whatever happens to the token:
+        the deletion of a VArray is cancelled only before any of its files is touched.
 
         :param vid: VArray id
-        :param collection: collection instance
+        :param collection: taken for the common signature of the adapters and not used here: the Arrays are found by
+          their symlinks
+        :param token: token of the write operation
         """
-
-        def _delete(array: Array) -> None:
-            array.delete()
-
+        check(token)
+        mark_started(token)
         try:
-            metas = self.executor.map(self.read_meta, self._adapter_iter(vid))
-            if metas:
-                arrays = [Array._create_from_meta(collection, meta, self) for meta in metas]
-                list(self.executor.map(_delete, arrays))
+            for symlink in list(self._adapter_iter(vid)):
+                self._delete(symlink)
         except Exception as e:
             self.logger.exception(e)
             raise e

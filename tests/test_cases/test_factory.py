@@ -1,7 +1,8 @@
 import pytest
 
 from deker_local_adapters import LocalArrayAdapter, LocalCollectionAdapter, LocalVArrayAdapter
-from deker_local_adapters.factory import AdaptersFactory
+from deker_local_adapters.errors import DekerStorageError
+from deker_local_adapters.factory import AdaptersFactory, storage_adapter_factory
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 
@@ -62,6 +63,17 @@ class TestArraysAdaptersFactory:
         factory = AdaptersFactory(ctx, uri)
         adapter = factory.get_collection_adapter()
         assert isinstance(adapter, LocalCollectionAdapter)
+
+
+class TestStorageAdapterFactory:
+    def test_default_is_hdf5(self):
+        assert storage_adapter_factory() is HDF5StorageAdapter
+        assert storage_adapter_factory("HDF5StorageAdapter") is HDF5StorageAdapter
+
+    @pytest.mark.parametrize("name", ["ZarrStorageAdapter", "", None])
+    def test_unknown_adapter_raises(self, name):
+        with pytest.raises(DekerStorageError):
+            storage_adapter_factory(name)
 
 
 if __name__ == "__main__":

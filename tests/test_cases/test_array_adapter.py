@@ -1,7 +1,11 @@
 import json
 import os
+import threading
+import time
 
+from collections.abc import Iterator
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -10,15 +14,55 @@ import h5py
 import numpy as np
 import pytest
 
-from deker.arrays import Array
+from cantok import DefaultToken, SimpleToken
+from deker.arrays import Array, VArray
 from deker.client import Client
 from deker.collection import Collection
-from deker.errors import DekerArrayError, DekerArrayTypeError, DekerValidationError
-from deker.schemas import ArraySchema, DimensionSchema
+from deker.errors import (
+    DekerArrayError,
+    DekerArrayTypeError,
+    DekerInstanceNotExistsError,
+    DekerLockError,
+    DekerValidationError,
+)
+from deker.flock import Flock
+from deker.schemas import ArraySchema, AttributeSchema, DimensionSchema, VArraySchema
 from deker.tools import get_paths
+from deker_tools.cancel import TokenCancelledError, cancellation_scope, read_token, write_token
+from deker_tools.typings import Sentinel
+from pytest_mock import MockerFixture
+
+from tests.conftest import Missing, check_not_found
+from tests.parameters.index_exp_params import valid_index_exp_params
+from tests.test_cases.test_mixin import (
+    AFTER_CHECK,
+    BEFORE_CHECK,
+    BEFORE_FIRST_DIRECTORY,
+    BEFORE_MAIN_FILE,
+    BEFORE_SYMLINK,
+    BEFORE_SYMLINK_DIRECTORIES,
+    BETWEEN_DIRECTORY_LEVELS,
+    WHILE_MAIN_FILE_IS_WRITTEN,
+    At,
+    Trash,
+    created_paths,
+    files,
+    watch_creator,
+)
+
+import deker_local_adapters.mixin
 
 from deker_local_adapters import AdaptersFactory, LocalArrayAdapter
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
+
+
+def trash_of(adapter: LocalArrayAdapter) -> Path:
+    """Find the trash of the storage of an adapter.
+
+    :param adapter: the adapter
+    :returns: the trash
+    """
+    return Path(adapter.uri.path) / adapter.ctx.config.trash_directory
 
 
 class TestArrayAdapter:
@@ -46,7 +90,7 @@ class TestArrayAdapter:
         file_path = paths.main / filename
         symlink = paths.symlink / filename
         array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
-        array_adapter.create(array)
+        assert array_adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
         assert file_path.exists()
         array[:].update(data)
         assert symlink.exists()
@@ -58,7 +102,7 @@ class TestArrayAdapter:
         self, array_with_attributes: Array, array_collection_with_attributes: Collection
     ):
         array_adapter = array_with_attributes._adapter
-        array_adapter.create(array_with_attributes)
+        array_adapter.create(array_with_attributes, timeout=Sentinel, token=DefaultToken())
         new_array = Array(
             collection=array_collection_with_attributes,
             adapter=array_adapter,
@@ -66,7 +110,7 @@ class TestArrayAdapter:
             custom_attributes=array_with_attributes.custom_attributes,
         )
         with pytest.raises(DekerValidationError):
-            assert array_adapter.create(new_array)
+            assert array_adapter.create(new_array, timeout=Sentinel, token=DefaultToken())
 
     def test_array_adapter_fails_to_create_file_exists(self, root_path, array: Array, factory):
         """Tests if array adapter creates array properly.
@@ -76,14 +120,16 @@ class TestArrayAdapter:
         """
         coll_path = root_path / factory.ctx.config.collections_directory / array.collection
         paths = get_paths(array, coll_path)
-        paths.create()
+        paths.create(coll_path)
         filename = str(array.id) + factory.ctx.storage_adapter.file_ext
         file_path = paths.main / filename
-        file_path.write_text("")
+        file_path.write_text("foreign")
         array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
         with pytest.raises(DekerArrayError) as e:
-            array_adapter.create(array)
-        print(e.value)
+            array_adapter.create(array, timeout=Sentinel, token=DefaultToken())
+        assert "already exists" in str(e.value)
+        assert file_path.read_text() == "foreign"  # refused in one step, never opened for writing
+        assert not (paths.symlink / filename).exists()
 
     @pytest.mark.parametrize(
         ("data", "raised"),
@@ -123,8 +169,8 @@ class TestArrayAdapter:
         file_path = paths.main / filename
         symlink = paths.symlink / filename
 
-        with pytest.raises(raised):  # type: ignore
-            array_adapter.create(array)
+        with pytest.raises(raised):
+            array_adapter.create(array, timeout=Sentinel, token=DefaultToken())
             array[:].update(data)
             assert not file_path.exists()
             assert not symlink.exists()
@@ -151,11 +197,11 @@ class TestArrayAdapter:
         paths = get_paths(array, coll_path)
         array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
         filename = paths.main / (array.id + array_adapter.storage_adapter.file_ext)
-        array_adapter.create(array)
+        array_adapter.create(array, timeout=Sentinel, token=DefaultToken())
         array[:].update(data)
         assert os.path.exists(filename)
         update_data = np.zeros(shape=(10, 10, 10))
-        array_adapter.update(array, np.index_exp[:], update_data)
+        array_adapter.update(array, np.index_exp[:], update_data, timeout=Sentinel, token=DefaultToken())
         with h5py.File(filename) as f:
             assert (f["data"][:] == update_data).all()
 
@@ -169,10 +215,10 @@ class TestArrayAdapter:
         paths = get_paths(array, coll_path)
         array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
         filename = paths.main / (array.id + array_adapter.storage_adapter.file_ext)
-        array_adapter.create(array)
+        array_adapter.create(array, timeout=Sentinel, token=DefaultToken())
         assert os.path.exists(filename)
-        with pytest.raises(ValueError):
-            assert array_adapter.update(array, np.index_exp[:], None)
+        with pytest.raises(DekerArrayError, match="shall not be None"):
+            array_adapter.update(array, np.index_exp[:], None, timeout=Sentinel, token=DefaultToken())
 
     @pytest.mark.parametrize(
         "data",
@@ -198,10 +244,10 @@ class TestArrayAdapter:
         paths = get_paths(array, coll_path)
         array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
         filename = paths.main / (array.id + factory.ctx.storage_adapter.file_ext)
-        array_adapter.create(array)
+        array_adapter.create(array, timeout=Sentinel, token=DefaultToken())
         assert os.path.exists(filename)
         array[:].update(data)
-        result = array_adapter.read_data(array, np.index_exp[:])
+        result = array_adapter.read_data(array, np.index_exp[:], timeout=Sentinel, token=DefaultToken())
         assert (result == np.asarray(data)).all()
 
     def test_array_adapter_reads_cleared_data_from_array(
@@ -219,10 +265,10 @@ class TestArrayAdapter:
         paths = get_paths(array, coll_path)
         array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
         filename = paths.main / (array.id + factory.ctx.storage_adapter.file_ext)
-        array_adapter.create(array)
+        array_adapter.create(array, timeout=Sentinel, token=DefaultToken())
         assert os.path.exists(filename)
-        result = array_adapter.read_data(array, np.index_exp[:])
-        assert (np.isnan(result)).all()  # type: ignore[arg-type]
+        result = array_adapter.read_data(array, np.index_exp[:], timeout=Sentinel, token=DefaultToken())
+        assert (np.isnan(result)).all()
         assert result.dtype == array.dtype
 
     @pytest.mark.parametrize(
@@ -252,13 +298,13 @@ class TestArrayAdapter:
         paths = get_paths(array, coll_path)
         array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
         filename = paths.main / (array.id + factory.ctx.storage_adapter.file_ext)
-        array_adapter.create(array)
+        array_adapter.create(array, timeout=Sentinel, token=DefaultToken())
         assert os.path.exists(filename)
         meta = array.read_meta()
         assert isinstance(meta, dict)
-        assert meta[metakey] == expected  # type: ignore[literal-required]
+        assert meta[metakey] == expected
 
-    def test_array_adapter_deletes_array(self, root_path, inserted_array: Array, factory):
+    def test_array_adapter_deletes_array(self, root_path, inserted_array: Array, factory, mocker: MockerFixture):
         """Tests if array adapter deletes array properly.
 
         :param root_path: temporary array_collection root path
@@ -267,12 +313,61 @@ class TestArrayAdapter:
         coll_path = root_path / factory.ctx.config.collections_directory / inserted_array.collection
         paths = get_paths(inserted_array, coll_path)
         array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
-        filename = paths.main / (inserted_array.id + factory.ctx.storage_adapter.file_ext)
+        filename = inserted_array.id + factory.ctx.storage_adapter.file_ext
         mainfile = paths.main / filename
-        array_adapter.delete(inserted_array)
-        assert not os.path.exists(paths.symlink / filename)
+        trash = trash_of(array_adapter)
+        assert list(trash.iterdir()) == []
+        empty_trash = mocker.spy(array_adapter, "empty_trash")
+        array_adapter.delete(inserted_array, background=False, _empty_trash=False, token=DefaultToken())
+        empty_trash.assert_not_called()
+        assert not os.path.lexists(paths.symlink / filename)
         assert not os.path.exists(mainfile)
         assert not paths.main.exists()
+        moved = sorted(trash.iterdir(), key=os.path.islink)
+        assert len(moved) == 2
+        assert h5py.is_hdf5(moved[0])  # the main file, then its symlink, which still names the main file
+        assert moved[1].readlink() == mainfile
+        array_adapter.empty_trash(background=False)
+        assert list(trash.iterdir()) == []
+
+    def test_array_adapter_delete_moves_the_main_file_then_the_symlink(
+        self, inserted_array: Array, mocker: MockerFixture
+    ):
+        adapter = inserted_array._adapter
+        main = adapter._get_main_path_to_file(inserted_array)
+        symlink = get_paths(inserted_array, adapter.collection_path).symlink / main.name
+        move = mocker.spy(deker_local_adapters.mixin, "move_to_trash")
+        adapter.delete(inserted_array, background=False, _empty_trash=True, token=DefaultToken())
+        assert [call.args[0] for call in move.call_args_list] == [main, symlink]
+        assert list(trash_of(adapter).iterdir()) == []
+
+    @pytest.mark.parametrize("background", [False, True])
+    def test_array_adapter_delete_empties_the_trash_when_asked(
+        self, inserted_array: Array, mocker: MockerFixture, background: bool
+    ):
+        adapter = inserted_array._adapter
+        empty_trash = mocker.patch("deker_local_adapters.mixin.empty_trash_directory")
+        adapter.delete(inserted_array, background=background, _empty_trash=True, token=DefaultToken())
+        empty_trash.assert_called_once_with(trash_of(adapter), background=background, logger=adapter.logger)
+        mocker.stopall()
+        adapter.empty_trash(background=False)
+        assert list(trash_of(adapter).iterdir()) == []
+
+    @pytest.mark.timeout(60)
+    @pytest.mark.parametrize("shared", [True, False], ids=["reader", "writer"])
+    def test_array_adapter_delete_passes_a_held_file(self, inserted_array: Array, shared: bool):
+        """The deletion takes no lock and waits for nobody: the holder of the file keeps its descriptor."""
+        adapter = inserted_array._adapter
+        main = adapter._get_main_path_to_file(inserted_array)
+        symlink = get_paths(inserted_array, adapter.collection_path).symlink / main.name
+        with Flock(main, shared=shared):
+            start = time.monotonic()
+            assert adapter.delete(inserted_array, background=False, _empty_trash=True, token=DefaultToken()) is None
+            assert time.monotonic() - start < 0.5
+            assert not main.exists()
+            assert not os.path.lexists(symlink)
+        assert adapter.is_deleted(inserted_array)
+        assert list(trash_of(adapter).iterdir()) == []
 
     def test_array_adapter_deletes_not_existing_array(
         self,
@@ -295,7 +390,7 @@ class TestArrayAdapter:
         assert symfile.exists()
         for f in (symfile, mainfile):
             os.remove(f)
-        array_adapter.delete(inserted_array)
+        array_adapter.delete(inserted_array, background=False, _empty_trash=True, token=DefaultToken())
         assert not os.path.exists(filename)
 
     def test_array_adapter_clear(
@@ -314,7 +409,7 @@ class TestArrayAdapter:
         array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
         filename = paths.main / (inserted_array.id + factory.ctx.storage_adapter.file_ext)
         assert filename.exists()
-        array_adapter.clear(inserted_array, np.index_exp[:])
+        array_adapter.clear(inserted_array, np.index_exp[:], timeout=Sentinel, token=DefaultToken())
         with h5py.File(filename, "r+") as f:
             ds = f.get("data")
             assert ds is None
@@ -328,7 +423,7 @@ class TestArrayAdapter:
         :param array_with_attributes: Array which contains some primary attributes
         """
         main_tree, rest = array_with_attributes.id.split("-", 1)
-        main_tree = os.path.sep.join((s for s in main_tree))
+        main_tree = os.path.sep.join(s for s in main_tree)
         main_path = (
             array_with_attributes._adapter.collection_path / array_with_attributes._adapter.data_dir / main_tree / rest
         )
@@ -350,13 +445,15 @@ class TestArrayAdapter:
             "time_attr_name": datetime.now(timezone.utc),
         }
         adapter = array_with_attributes._adapter
-        adapter.create(array_with_attributes)
-        adapter.update_meta_custom_attributes(array_with_attributes, new_custom_attributes)
+        adapter.create(array_with_attributes, timeout=Sentinel, token=DefaultToken())
+        adapter.update_meta_custom_attributes(
+            array_with_attributes, new_custom_attributes, timeout=Sentinel, token=DefaultToken()
+        )
         assert array_with_attributes.custom_attributes == new_custom_attributes
         meta = array_with_attributes.read_meta()
         ar = Array._create_from_meta(
-            array_with_attributes._Array__collection,  # type: ignore[attr-defined]
-            meta,  # type: ignore[arg-type]
+            array_with_attributes._Array__collection,
+            meta,
             array_with_attributes._adapter,
         )
         assert ar.custom_attributes == new_custom_attributes
@@ -365,7 +462,7 @@ class TestArrayAdapter:
         arrays = [array_collection.create() for _ in range(10)]
         metas = [json.loads(array._create_meta()) for array in arrays]
         adapter: LocalArrayAdapter = arrays[0]._adapter
-        inner_metas = [meta for meta in adapter]
+        inner_metas = [*adapter]
         assert len(inner_metas) == len(metas)
         assert all(inner_meta in metas for inner_meta in inner_metas)
 
@@ -374,7 +471,7 @@ class TestArrayAdapter:
         coll = client.create_collection("test", schema=schema)
         array = coll.create()
         try:
-            data = np.asarray([np.iinfo(schema.dtype).min] * 2).reshape(2)  # type: ignore[arg-type,type-var]
+            data = np.asarray([np.iinfo(schema.dtype).min] * 2).reshape(2)
             array[:].update(data)
             array[:].clear()
             result = array[:].read()
@@ -385,11 +482,630 @@ class TestArrayAdapter:
 
     def test_array_raises_varray_error(self, varray_collection: Collection):
         _id = str(uuid4())
-        with pytest.raises(DekerArrayError) as e:
+        with pytest.raises(DekerInstanceNotExistsError) as e:
             varray_collection.arrays.create({"vid": _id, "v_position": (0, 0, 0)})
 
         assert f"VArray with id={_id} doesn't exist" == str(e.value)
 
 
+class TestArrayAdapterEdges:
+    @pytest.fixture
+    def varray_arrays_adapter(self, varray_collection: Collection, ctx) -> LocalArrayAdapter:
+        """Adapter of the Arrays (Arrays) that belong to the VArray collection."""
+        from concurrent.futures import ThreadPoolExecutor
+
+        return LocalArrayAdapter(
+            collection_path=varray_collection.path,
+            collection_options=varray_collection.options,
+            ctx=ctx,
+            storage_adapter=HDF5StorageAdapter,
+            executor=ThreadPoolExecutor(max_workers=1),
+        )
+
+    def test_symlink_filename_of_an_existing_array(
+        self, varray_arrays_adapter: LocalArrayAdapter, inserted_varray: VArray, varray_collection: Collection
+    ):
+        symlink = next(iter(varray_arrays_adapter._adapter_iter(inserted_varray.id)))
+        position = tuple(int(i) for i in symlink.parent.name.split("-"))
+        filename = varray_arrays_adapter._get_symlink_filename(
+            inserted_varray.id, position, varray_collection.array_schema.primary_attributes
+        )
+        assert filename == symlink
+
+    def test_symlink_filename_of_an_empty_array_directory(
+        self, varray_arrays_adapter: LocalArrayAdapter, inserted_varray: VArray, varray_collection: Collection
+    ):
+        symlink = next(iter(varray_arrays_adapter._adapter_iter(inserted_varray.id)))
+        position = tuple(int(i) for i in symlink.parent.name.split("-"))
+        symlink.unlink()
+        assert (
+            varray_arrays_adapter._get_symlink_filename(
+                inserted_varray.id, position, varray_collection.array_schema.primary_attributes
+            )
+            is None
+        )
+
+    def test_symlink_filename_of_a_missing_array(
+        self, varray_arrays_adapter: LocalArrayAdapter, inserted_varray: VArray, varray_collection: Collection
+    ):
+        position = (99,) * len(inserted_varray.vgrid)
+        assert (
+            varray_arrays_adapter._get_symlink_filename(
+                inserted_varray.id, position, varray_collection.array_schema.primary_attributes
+            )
+            is None
+        )
+
+    def test_adapter_iter_skips_foreign_files(
+        self, varray_arrays_adapter: LocalArrayAdapter, inserted_varray: VArray, varray_collection: Collection
+    ):
+        root = varray_collection.path / varray_arrays_adapter.symlinks_dir / inserted_varray.id
+        (root / "stray.lock").write_text("x")
+        symlinks = list(varray_arrays_adapter._adapter_iter(inserted_varray.id))
+        assert symlinks
+        assert all(s.name.endswith(varray_arrays_adapter.file_ext) for s in symlinks)
+
+
 if __name__ == "__main__":
     pytest.main()
+
+
+class TestArrayAdapterBounds:
+    """The bounds of every index expression DEKER accepts go through the adapter and its locks unchanged."""
+
+    @staticmethod
+    def adapter_of(root_path: Path, factory: AdaptersFactory, array: Array) -> LocalArrayAdapter:
+        coll_path = root_path / factory.ctx.config.collections_directory / array.collection
+        return factory.get_array_adapter(coll_path, HDF5StorageAdapter)
+
+    @pytest.mark.parametrize("index_exp", valid_index_exp_params)
+    def test_read_data_returns_the_cells_of_the_bounds(
+        self, root_path: Path, factory: AdaptersFactory, inserted_array: Array, array_data: np.ndarray, index_exp
+    ):
+        read = self.adapter_of(root_path, factory, inserted_array).read_data(
+            inserted_array, index_exp, timeout=Sentinel, token=DefaultToken()
+        )
+        assert np.ndim(read) == np.ndim(array_data[index_exp])
+        assert np.array_equal(np.asarray(read), array_data[index_exp])
+
+    @pytest.mark.parametrize("index_exp", valid_index_exp_params)
+    def test_update_writes_the_cells_of_the_bounds_only(
+        self, root_path: Path, factory: AdaptersFactory, inserted_array: Array, array_data: np.ndarray, index_exp
+    ):
+        adapter = self.adapter_of(root_path, factory, inserted_array)
+        expected = array_data.copy()
+        expected[index_exp] = -9999
+        adapter.update(
+            inserted_array,
+            index_exp,
+            np.full(np.shape(array_data[index_exp]), -9999.0),
+            timeout=Sentinel,
+            token=DefaultToken(),
+        )
+        assert np.array_equal(
+            np.asarray(adapter.read_data(inserted_array, np.index_exp[:], timeout=Sentinel, token=DefaultToken())),
+            expected,
+        )
+
+    @pytest.mark.parametrize("index_exp", valid_index_exp_params)
+    def test_clear_empties_the_cells_of_the_bounds_only(
+        self, root_path: Path, factory: AdaptersFactory, inserted_array: Array, array_data: np.ndarray, index_exp
+    ):
+        adapter = self.adapter_of(root_path, factory, inserted_array)
+        expected = array_data.copy()
+        expected[index_exp] = np.nan
+        adapter.clear(inserted_array, index_exp, timeout=Sentinel, token=DefaultToken())
+        assert np.array_equal(
+            np.asarray(adapter.read_data(inserted_array, np.index_exp[:], timeout=Sentinel, token=DefaultToken())),
+            expected,
+            equal_nan=True,
+        )
+
+
+class CancelScopeAndCall:
+    """Stand for a method of the storage adapter: cancel the scope, then do the real work.
+
+    :param scope: token of the cancellation scope
+    :param method: the real method
+    """
+
+    def __init__(self, scope: SimpleToken, method):
+        self.scope = scope
+        self.method = method
+
+    def __call__(self, *args, **kwargs):
+        self.scope.cancel()
+        return self.method(*args, **kwargs)
+
+
+def write_update(adapter, array, **kwargs):
+    adapter.update(array, np.index_exp[0, 0, 0], 7.0, **kwargs)
+
+
+def write_clear(adapter, array, **kwargs):
+    adapter.clear(array, np.index_exp[0, 0, 0], **kwargs)
+
+
+def write_attributes(adapter, array, **kwargs):
+    adapter.update_meta_custom_attributes(array, {}, **kwargs)
+
+
+def write_delete(adapter, array, *, timeout, token):
+    """Delete the array: the deletion takes no timeout, it waits for nobody."""
+    adapter.delete(array, background=False, _empty_trash=True, token=token)
+
+
+WRITES = {
+    "update": write_update,
+    "clear": write_clear,
+    "update_meta_custom_attributes": write_attributes,
+    "delete": write_delete,
+}
+LOCKING_WRITES = [operation for operation in WRITES if operation != "delete"]
+
+
+class TestArrayAdapterCancellation:
+    """The array adapter stops a cancelled operation before its file is started, never after."""
+
+    @pytest.fixture
+    def main_file(self, inserted_array: Array) -> Path:
+        return inserted_array._adapter._get_main_path_to_file(inserted_array)
+
+    @pytest.mark.parametrize("operation", list(WRITES))
+    def test_cancelled_token_changes_nothing(self, inserted_array: Array, main_file: Path, operation):
+        before = (main_file.stat().st_mtime_ns, main_file.read_bytes())
+        token = SimpleToken()
+        token.cancel()
+        with pytest.raises(TokenCancelledError):
+            WRITES[operation](inserted_array._adapter, inserted_array, timeout=Sentinel, token=token)
+        assert (main_file.stat().st_mtime_ns, main_file.read_bytes()) == before
+        holder = Flock(main_file)
+        holder.acquire()  # nothing holds the file
+        holder.release()
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("operation", LOCKING_WRITES)
+    def test_cancelled_while_waiting_for_the_lock_changes_nothing(
+        self, inserted_array: Array, main_file: Path, operation
+    ):
+        before = main_file.read_bytes()
+        scope = SimpleToken()
+        with cancellation_scope(scope):
+            token = write_token()
+        canceller = threading.Timer(0.3, scope.cancel)
+        with Flock(main_file, shared=True):
+            canceller.start()
+            with pytest.raises(TokenCancelledError):
+                WRITES[operation](inserted_array._adapter, inserted_array, timeout=30, token=token)
+        canceller.join()
+        assert main_file.read_bytes() == before
+
+    @pytest.mark.timeout(10)
+    @pytest.mark.parametrize("operation", LOCKING_WRITES)
+    def test_timeout_of_the_call_limits_the_wait(self, inserted_array: Array, main_file: Path, operation):
+        start = time.monotonic()
+        with Flock(main_file, shared=True), pytest.raises(DekerLockError):
+            WRITES[operation](inserted_array._adapter, inserted_array, timeout=1, token=DefaultToken())
+        assert time.monotonic() - start < 2.5
+        assert main_file.exists()
+
+    @pytest.mark.parametrize(
+        ("operation", "storage_method"),
+        [
+            ("update", "update_data"),
+            ("clear", "clear_data"),
+            ("update_meta_custom_attributes", "update_meta_custom_attributes"),
+        ],
+    )
+    def test_cancelled_after_the_file_is_started_goes_to_its_end(
+        self, inserted_array: Array, mocker: MockerFixture, operation, storage_method
+    ):
+        adapter = inserted_array._adapter
+        scope = SimpleToken()
+        with cancellation_scope(scope):
+            token = write_token()
+        real = getattr(adapter.storage_adapter, storage_method)
+        mocker.patch.object(adapter.storage_adapter, storage_method, side_effect=CancelScopeAndCall(scope, real))
+        WRITES[operation](adapter, inserted_array, timeout=Sentinel, token=token)
+        assert scope.cancelled
+        if operation == "update":
+            assert inserted_array[0, 0, 0].read() == 7.0
+        if operation == "clear":
+            assert np.isnan(inserted_array[0, 0, 0].read())
+
+    def test_delete_cancelled_after_the_first_move_moves_everything(self, inserted_array: Array, mocker: MockerFixture):
+        adapter = inserted_array._adapter
+        main = adapter._get_main_path_to_file(inserted_array)
+        symlink = get_paths(inserted_array, adapter.collection_path).symlink / main.name
+        scope = SimpleToken()
+        with cancellation_scope(scope):
+            token = write_token()
+        real = deker_local_adapters.mixin.move_to_trash
+        mocker.patch.object(deker_local_adapters.mixin, "move_to_trash", side_effect=CancelScopeAndCall(scope, real))
+        adapter.delete(inserted_array, background=False, _empty_trash=True, token=token)
+        assert scope.cancelled
+        assert not main.exists()
+        assert not os.path.lexists(symlink)
+        assert list(trash_of(adapter).iterdir()) == []
+
+    def test_read_cancelled_while_the_file_is_read_returns_no_data(self, inserted_array: Array, mocker: MockerFixture):
+        adapter = inserted_array._adapter
+        scope = SimpleToken()
+        with cancellation_scope(scope):
+            token = read_token(60)
+        real = adapter.storage_adapter.read_data
+        read = mocker.patch.object(adapter.storage_adapter, "read_data", side_effect=CancelScopeAndCall(scope, real))
+        with pytest.raises(TokenCancelledError):
+            adapter.read_data(inserted_array, np.index_exp[0, 0, 0], timeout=Sentinel, token=token)
+        read.assert_called_once()
+
+    def test_read_with_a_cancelled_token_does_not_open_the_file(self, inserted_array: Array, mocker: MockerFixture):
+        adapter = inserted_array._adapter
+        read = mocker.spy(adapter.storage_adapter, "read_data")
+        token = SimpleToken()
+        token.cancel()
+        with pytest.raises(TokenCancelledError):
+            adapter.read_data(inserted_array, np.index_exp[0, 0, 0], timeout=Sentinel, token=token)
+        read.assert_not_called()
+
+    def test_create_with_a_cancelled_token_creates_no_file(self, array: Array):
+        token = SimpleToken()
+        token.cancel()
+        with pytest.raises(TokenCancelledError):
+            array._adapter.create(array, timeout=Sentinel, token=token)
+        assert not array._adapter._get_main_path_to_file(array).exists()
+
+
+class TestDeleteAllByVidCancellation:
+    """The Arrays of a VArray are moved to the trash all or none when the deletion is cancelled."""
+
+    @pytest.fixture
+    def array_adapter(self, inserted_varray: VArray):
+        return inserted_varray._VArray__array_adapter
+
+    def arrays_left(self, inserted_varray: VArray, array_adapter) -> int:
+        return len(list(array_adapter._adapter_iter(inserted_varray.id)))
+
+    def test_cancelled_before_the_start_deletes_nothing(self, inserted_varray: VArray, array_adapter):
+        before = self.arrays_left(inserted_varray, array_adapter)
+        scope = SimpleToken()
+        with cancellation_scope(scope):
+            token = write_token()
+        scope.cancel()
+        with pytest.raises(TokenCancelledError):
+            array_adapter.delete_all_by_vid(inserted_varray.id, inserted_varray._VArray__collection, token=token)
+        assert self.arrays_left(inserted_varray, array_adapter) == before > 0
+        assert list(trash_of(array_adapter).iterdir()) == []
+
+    def test_cancelled_after_the_first_array_deletes_every_array(
+        self, inserted_varray: VArray, array_adapter, mocker: MockerFixture
+    ):
+        scope = SimpleToken()
+        with cancellation_scope(scope):
+            token = write_token()
+        mocker.patch.object(array_adapter, "_delete", side_effect=CancelScopeAndCall(scope, array_adapter._delete))
+        array_adapter.delete_all_by_vid(inserted_varray.id, inserted_varray._VArray__collection, token=token)
+        assert scope.cancelled
+        assert self.arrays_left(inserted_varray, array_adapter) == 0
+        array_adapter.empty_trash(background=False)
+
+    @pytest.mark.timeout(60)
+    def test_arrays_are_moved_by_their_symlinks_without_metadata_and_locks(
+        self, inserted_varray: VArray, array_adapter, mocker: MockerFixture
+    ):
+        """Each Array: its main file (the target of its symlink), then its symlink; a writer holding one is no bar."""
+        symlinks = list(array_adapter._adapter_iter(inserted_varray.id))
+        assert len(symlinks) > 1
+        expected = [path for symlink in symlinks for path in (symlink.readlink(), symlink)]
+        read_meta = mocker.spy(array_adapter, "read_meta")
+        move = mocker.spy(deker_local_adapters.mixin, "move_to_trash")
+        with Flock(symlinks[0].readlink()):
+            array_adapter.delete_all_by_vid(
+                inserted_varray.id, inserted_varray._VArray__collection, token=DefaultToken()
+            )
+        assert [call.args[0] for call in move.call_args_list] == expected
+        read_meta.assert_not_called()
+        assert self.arrays_left(inserted_varray, array_adapter) == 0
+        assert not (array_adapter.collection_path / array_adapter.symlinks_dir / inserted_varray.id).exists()
+        array_adapter.empty_trash(background=False)
+
+
+def read_data(adapter, array, **kwargs):
+    adapter.read_data(array, np.index_exp[0, 0, 0], **kwargs)
+
+
+def read_meta(adapter, array, **kwargs):
+    adapter.read_meta(array)
+
+
+# every operation of the adapter that opens the file of the Array, with the method of the storage adapter it calls
+FILE_OPERATIONS = {
+    "read_data": (read_data, "read_data"),
+    "read_meta": (read_meta, "read_meta"),
+    "update": (write_update, "update_data"),
+    "clear": (write_clear, "clear_data"),
+    "update_meta_custom_attributes": (write_attributes, "update_meta_custom_attributes"),
+}
+
+
+class MoveAwayAndCall:
+    """Stand for a method of the storage adapter: moves the file away while the lock is held, then does the real work.
+
+    :param method: the real method
+    :param target: where the file is moved to
+    """
+
+    def __init__(self, method, target: Path) -> None:
+        self.method = method
+        self.target = target
+        self.calls = 0
+
+    def __call__(self, path: Path, *args, **kwargs):
+        self.calls += 1
+        path.rename(self.target / path.name)
+        return self.method(path, *args, **kwargs)
+
+
+# what HDF5 raises when the file is renamed between its opening and its stat by name: no errno
+STAT_INFO_ERROR = "Unable to synchronously open file (can't retrieve stat info for file)"
+
+
+class FailToOpen:
+    """Stand for ``h5py.File``: fails to open as HDF5 does when the file is renamed while it is opened.
+
+    :param target: where the file is moved to first; ``None`` - the file stays
+    """
+
+    def __init__(self, target: Path | None) -> None:
+        self.target = target
+        self.calls = 0
+
+    def __call__(self, path, *args, **kwargs):
+        self.calls += 1
+        if self.target is not None:
+            Path(path).rename(self.target / Path(path).name)
+        raise OSError(STAT_INFO_ERROR)
+
+
+class TestArrayAdapterOfAFileGone:
+    """A file gone between the lock and its opening is an Array that does not exist; a broken file stays its error."""
+
+    @pytest.mark.parametrize("operation", list(FILE_OPERATIONS))
+    def test_file_gone_while_it_is_opened(
+        self, inserted_array: Array, tmp_path: Path, mocker: MockerFixture, operation
+    ):
+        """The deletion moves the file to the trash while HDF5 opens it: HDF5 raises a bare OSError."""
+        adapter = inserted_array._adapter
+        call, _ = FILE_OPERATIONS[operation]
+        file = adapter._get_main_path_to_file(inserted_array)
+        open_file = FailToOpen(tmp_path)
+        mocker.patch.object(h5py, "File", side_effect=open_file)
+        with pytest.raises(DekerInstanceNotExistsError) as error:
+            call(adapter, inserted_array, timeout=Sentinel, token=DefaultToken())
+        assert str(error.value) == f"{file} doesn't exist"
+        assert open_file.calls == 1
+
+    @pytest.mark.parametrize("operation", list(FILE_OPERATIONS))
+    def test_failure_to_open_a_file_in_place_keeps_its_error(
+        self, inserted_array: Array, mocker: MockerFixture, operation
+    ):
+        adapter = inserted_array._adapter
+        call, _ = FILE_OPERATIONS[operation]
+        mocker.patch.object(h5py, "File", side_effect=FailToOpen(None))
+        with pytest.raises(OSError) as error:
+            call(adapter, inserted_array, timeout=Sentinel, token=DefaultToken())
+        assert type(error.value) is OSError
+        assert str(error.value) == STAT_INFO_ERROR
+
+    @pytest.mark.parametrize("operation", list(FILE_OPERATIONS))
+    def test_file_gone_after_the_lock(self, inserted_array: Array, tmp_path: Path, mocker: MockerFixture, operation):
+        adapter = inserted_array._adapter
+        call, storage_method = FILE_OPERATIONS[operation]
+        file = adapter._get_main_path_to_file(inserted_array)
+        move = MoveAwayAndCall(getattr(adapter.storage_adapter, storage_method), tmp_path)
+        mocker.patch.object(adapter.storage_adapter, storage_method, side_effect=move)
+        with pytest.raises(DekerInstanceNotExistsError) as error:
+            call(adapter, inserted_array, timeout=Sentinel, token=DefaultToken())
+        assert str(error.value) == f"{file} doesn't exist"
+        assert move.calls == 1
+        holder = Flock(tmp_path / file.name)
+        holder.acquire()  # the lock of the call is released
+        holder.release()
+
+    @pytest.mark.parametrize("operation", list(FILE_OPERATIONS))
+    def test_broken_file_keeps_its_error(self, inserted_array: Array, operation):
+        """A file that is there but is not an hdf5 file is not a missing Array (a guard)."""
+        adapter = inserted_array._adapter
+        call, _ = FILE_OPERATIONS[operation]
+        file = adapter._get_main_path_to_file(inserted_array)
+        file.write_bytes(b"not an hdf5 file")
+        with pytest.raises(OSError) as error:
+            call(adapter, inserted_array, timeout=Sentinel, token=DefaultToken())
+        assert type(error.value) is OSError
+        assert "file signature not found" in str(error.value)
+
+
+# --- the creator of an Array of a VArray checks the VArray: its json file before, its symlink after -------------------
+
+VARRAY_KINDS = {
+    "no primary attributes": ({}, []),
+    "an int primary attribute": ({"number": 3}, [AttributeSchema(name="number", dtype=int, primary=True)]),
+    # the path of the symlink takes the iso form of a datetime, the json file keeps its serialized form
+    "a datetime primary attribute": (
+        {"time": datetime(2026, 11, 27, 20, 38, 1, 5, tzinfo=timezone.utc)},
+        [AttributeSchema(name="time", dtype=datetime, primary=True)],
+    ),
+}
+
+
+@pytest.fixture(params=list(VARRAY_KINDS))
+def created_varray(request, client: Client) -> Iterator[VArray]:
+    """Create a VArray of one Array position in a collection of its own; the collection is deleted afterwards."""
+    primary_attributes, attributes = VARRAY_KINDS[request.param]
+    schema = VArraySchema(dimensions=[DimensionSchema(name="x", size=4)], dtype=float, vgrid=[2], attributes=attributes)
+    collection = client.create_collection(f"v{uuid4().hex}", schema=schema)
+    yield collection.create(primary_attributes=primary_attributes)
+    collection.delete()
+
+
+def inner_array(varray: VArray) -> Array:
+    """Make the first Array of a VArray, not created yet.
+
+    :param varray: the VArray
+    :returns: the Array at the first position
+    """
+    return Array(
+        varray._VArray__collection,
+        varray._VArray__array_adapter,
+        primary_attributes={"vid": varray.id, "v_position": (0,)},
+    )
+
+
+class TestCreatorOfAnArrayOfAVArray:
+    """An Array of a deleted VArray is never left: the creator looks at the VArray before and after it creates."""
+
+    @pytest.mark.parametrize(
+        ("point", "gone", "moved"),
+        [
+            (BEFORE_FIRST_DIRECTORY, "varray symlink", 2),
+            (BETWEEN_DIRECTORY_LEVELS, "varray symlink", 2),
+            (BEFORE_SYMLINK_DIRECTORIES, "varray symlink", 2),
+            (BEFORE_MAIN_FILE, "varray symlink", 2),
+            (WHILE_MAIN_FILE_IS_WRITTEN, "varray symlink", 2),
+            (BEFORE_SYMLINK, "varray symlink", 2),
+            (BEFORE_CHECK, "main file", 4),
+            (AFTER_CHECK, None, 4),
+        ],
+    )
+    def test_creator_meets_the_deletion_of_its_varray(
+        self, created_varray: VArray, point: str, gone: str | None, moved: int, mocker
+    ):
+        """The deletion runs at the point of the creator, in its thread: it takes no lock, so nothing waits."""
+        array = inner_array(created_varray)
+        adapter = array._adapter
+        collection = adapter.collection_path
+        varray_file, varray_symlink = created_paths(created_varray)
+        trash = trash_of(adapter)
+        assert list(trash.iterdir()) == []
+        hook = At(point, partial(created_varray.delete, _empty_trash=False))
+        watch_creator(mocker, array, hook)
+        if gone is None:
+            assert adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
+        else:
+            with pytest.raises(DekerInstanceNotExistsError) as error:
+                adapter.create(array, timeout=Sentinel, token=DefaultToken())
+            path = varray_symlink if gone == "varray symlink" else created_paths(array)[0]
+            assert str(error.value) == f"{path} doesn't exist"
+        assert hook.done
+        assert files(collection) == [f"{collection.name}.json"]  # no file of the VArray or of its Arrays is left
+        assert len(list(trash.iterdir())) == moved  # the files of the VArray and of its Arrays, nothing else
+        adapter.empty_trash(background=False)
+        assert list(trash.iterdir()) == []
+
+    def test_symlink_of_the_varray_is_found_by_its_json_file(self, created_varray: VArray):
+        """Guard against a false rollback: the path is built the way the VArray built it, from the json file."""
+        array = inner_array(created_varray)
+        assert array._adapter._varray_symlink(array) == created_paths(created_varray)[1]
+
+    def test_created_array_passes_the_check(self, created_varray: VArray, mocker):
+        """Guard against a false rollback: an Array of a living VArray is created and kept."""
+        array = inner_array(created_varray)
+        main, symlink = created_paths(array)
+        unlink = mocker.spy(Path, "unlink")
+        assert array._adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
+        assert main.is_file()
+        assert symlink.resolve() == main
+        unlink.assert_not_called()
+
+    def test_varray_whose_file_is_gone_is_not_existing(self, created_varray: VArray, tmp_path):
+        """The directory of the json file stays: the VArray does not exist anyway, and nothing is created."""
+        array = inner_array(created_varray)
+        varray_file = created_paths(created_varray)[0]
+        trash = Trash(tmp_path / "trash")
+        trash.move(varray_file)
+        try:
+            with pytest.raises(DekerInstanceNotExistsError) as error:
+                array._adapter.create(array, timeout=Sentinel, token=DefaultToken())
+            assert str(error.value) == f"VArray with id={created_varray.id} doesn't exist"
+            assert varray_file.parent.is_dir()
+            assert not created_paths(array)[0].exists()
+        finally:
+            trash.put_back(varray_file)
+
+
+STORAGE_GONE = [pytest.param(True, id="collections gone"), pytest.param(False, id="file gone")]
+
+
+class TestNotFoundTellsAMissingStorageFromAMissingFile:
+    """Every place of the Array adapter that does not find a file tells a missing collections directory of the
+    storage (critical) from a missing file (the answer as before).
+    """
+
+    @pytest.fixture
+    def array(self, own_client: Client, array_schema: ArraySchema) -> Array:
+        """An Array of a storage of the test's own.
+
+        :param own_client: client of the storage
+        :param array_schema: schema of the collection
+        """
+        return own_client.create_collection("own", array_schema).create()
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    @pytest.mark.parametrize(
+        ("inner", "call"),
+        [
+            pytest.param(
+                "read_data",
+                lambda adapter, array: adapter.read_data(
+                    array, np.index_exp[:], timeout=Sentinel, token=DefaultToken()
+                ),
+                id="read_data",
+            ),
+            pytest.param("read_meta", lambda adapter, array: adapter.read_meta(array), id="read_meta"),
+            pytest.param(
+                "update_data",
+                lambda adapter, array: adapter.update(
+                    array, np.index_exp[:], np.zeros(array.shape), timeout=Sentinel, token=DefaultToken()
+                ),
+                id="update",
+            ),
+            pytest.param(
+                "update_meta_custom_attributes",
+                lambda adapter, array: adapter.update_meta_custom_attributes(
+                    array, {}, timeout=Sentinel, token=DefaultToken()
+                ),
+                id="update_meta_custom_attributes",
+            ),
+            pytest.param(
+                "clear_data",
+                lambda adapter, array: adapter.clear(array, np.index_exp[:], timeout=Sentinel, token=DefaultToken()),
+                id="clear",
+            ),
+        ],
+    )
+    def test_file_held_but_not_found(self, array: Array, mocker: MockerFixture, storage_gone: bool, inner: str, call):
+        """The file is held, then not found by the storage adapter: removed with its collection, or alone."""
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        mocker.patch.object(adapter.storage_adapter, inner, side_effect=missing)
+        filename = adapter._get_main_path_to_file(array)
+        check_not_found(lambda: call(adapter, array), missing, f"{filename} doesn't exist")
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_json_file_of_the_varray_of_an_array_not_found(self, array: Array, storage_gone: bool):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        missing.take_away()
+        vid = str(uuid4())
+        array_of_a_varray = type("ArrayOfAVArray", (), {"_vid": vid})()
+        check_not_found(
+            lambda: adapter._varray_symlink(array_of_a_varray), missing, f"VArray with id={vid} doesn't exist"
+        )
+
+    @pytest.mark.parametrize("storage_gone", STORAGE_GONE)
+    def test_symlink_of_an_array_of_a_varray_not_found(self, array: Array, storage_gone: bool):
+        adapter = array._adapter
+        missing = Missing(adapter.collection_path.parent, storage_gone)
+        missing.take_away()
+        attributes = (AttributeSchema(name="vid", dtype=str, primary=True),)
+        check_not_found(lambda: adapter._get_symlink_filename(str(uuid4()), (0,), attributes), missing, None)
