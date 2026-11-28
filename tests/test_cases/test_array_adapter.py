@@ -4,9 +4,8 @@ import threading
 import time
 
 from collections.abc import Iterator
-from concurrent.futures import ThreadPoolExecutor
-from concurrent.futures import TimeoutError as FutureTimeoutError
 from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
@@ -51,8 +50,19 @@ from tests.test_cases.test_mixin import (
     watch_creator,
 )
 
+import deker_local_adapters.mixin
+
 from deker_local_adapters import AdaptersFactory, LocalArrayAdapter
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
+
+
+def trash_of(adapter: LocalArrayAdapter) -> Path:
+    """Find the trash of the storage of an adapter.
+
+    :param adapter: the adapter
+    :returns: the trash
+    """
+    return Path(adapter.uri.path) / adapter.ctx.config.trash_directory
 
 
 class TestArrayAdapter:
@@ -294,7 +304,7 @@ class TestArrayAdapter:
         assert isinstance(meta, dict)
         assert meta[metakey] == expected
 
-    def test_array_adapter_deletes_array(self, root_path, inserted_array: Array, factory):
+    def test_array_adapter_deletes_array(self, root_path, inserted_array: Array, factory, mocker: MockerFixture):
         """Tests if array adapter deletes array properly.
 
         :param root_path: temporary array_collection root path
@@ -303,46 +313,61 @@ class TestArrayAdapter:
         coll_path = root_path / factory.ctx.config.collections_directory / inserted_array.collection
         paths = get_paths(inserted_array, coll_path)
         array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
-        filename = paths.main / (inserted_array.id + factory.ctx.storage_adapter.file_ext)
+        filename = inserted_array.id + factory.ctx.storage_adapter.file_ext
         mainfile = paths.main / filename
-        array_adapter.delete(inserted_array, timeout=Sentinel, token=DefaultToken())
-        assert not os.path.exists(paths.symlink / filename)
+        trash = trash_of(array_adapter)
+        assert list(trash.iterdir()) == []
+        empty_trash = mocker.spy(array_adapter, "empty_trash")
+        array_adapter.delete(inserted_array, background=False, _empty_trash=False, token=DefaultToken())
+        empty_trash.assert_not_called()
+        assert not os.path.lexists(paths.symlink / filename)
         assert not os.path.exists(mainfile)
         assert not paths.main.exists()
+        moved = sorted(trash.iterdir(), key=os.path.islink)
+        assert len(moved) == 2
+        assert h5py.is_hdf5(moved[0])  # the main file, then its symlink, which still names the main file
+        assert moved[1].readlink() == mainfile
+        array_adapter.empty_trash(background=False)
+        assert list(trash.iterdir()) == []
 
-    @pytest.mark.timeout(60)
-    def test_array_adapter_delete_waits_for_a_reader(self, root_path, inserted_array: Array, factory):
-        """A delete holds the file exclusively: it waits for the reader to leave and only then removes the files."""
-        coll_path = root_path / factory.ctx.config.collections_directory / inserted_array.collection
-        paths = get_paths(inserted_array, coll_path)
-        filename = inserted_array.id + factory.ctx.storage_adapter.file_ext
-        array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
-        reader = Flock(paths.main / filename, shared=True)
-        reader.acquire()
-        with ThreadPoolExecutor(max_workers=1) as pool:
-            deletion = pool.submit(array_adapter.delete, inserted_array, timeout=Sentinel, token=DefaultToken())
-            with pytest.raises(FutureTimeoutError):
-                deletion.result(timeout=0.5)  # the reader is still there
-            assert (paths.main / filename).exists()
-            reader.release()
-            assert deletion.result(timeout=10) is None
-        assert not (paths.main / filename).exists()
-        assert not (paths.symlink / filename).exists()
-
-    @pytest.mark.timeout(60)
-    def test_array_adapter_delete_times_out_on_a_long_reader(
-        self, root_path, inserted_array: Array, factory, mocker: MockerFixture
+    def test_array_adapter_delete_moves_the_main_file_then_the_symlink(
+        self, inserted_array: Array, mocker: MockerFixture
     ):
-        """A delete gives up by the write lock timeout and leaves the files in place."""
-        coll_path = root_path / factory.ctx.config.collections_directory / inserted_array.collection
-        paths = get_paths(inserted_array, coll_path)
-        filename = inserted_array.id + factory.ctx.storage_adapter.file_ext
-        array_adapter = factory.get_array_adapter(coll_path, HDF5StorageAdapter)
-        mocker.patch.object(array_adapter.ctx.config, "write_lock_timeout", 1)
-        with Flock(paths.main / filename, shared=True), pytest.raises(DekerLockError):
-            array_adapter.delete(inserted_array, timeout=Sentinel, token=DefaultToken())
-        assert (paths.main / filename).exists()
-        assert (paths.symlink / filename).exists()
+        adapter = inserted_array._adapter
+        main = adapter._get_main_path_to_file(inserted_array)
+        symlink = get_paths(inserted_array, adapter.collection_path).symlink / main.name
+        move = mocker.spy(deker_local_adapters.mixin, "move_to_trash")
+        adapter.delete(inserted_array, background=False, _empty_trash=True, token=DefaultToken())
+        assert [call.args[0] for call in move.call_args_list] == [main, symlink]
+        assert list(trash_of(adapter).iterdir()) == []
+
+    @pytest.mark.parametrize("background", [False, True])
+    def test_array_adapter_delete_empties_the_trash_when_asked(
+        self, inserted_array: Array, mocker: MockerFixture, background: bool
+    ):
+        adapter = inserted_array._adapter
+        empty_trash = mocker.patch("deker_local_adapters.mixin.empty_trash_directory")
+        adapter.delete(inserted_array, background=background, _empty_trash=True, token=DefaultToken())
+        empty_trash.assert_called_once_with(trash_of(adapter), background=background, logger=adapter.logger)
+        mocker.stopall()
+        adapter.empty_trash(background=False)
+        assert list(trash_of(adapter).iterdir()) == []
+
+    @pytest.mark.timeout(60)
+    @pytest.mark.parametrize("shared", [True, False], ids=["reader", "writer"])
+    def test_array_adapter_delete_passes_a_held_file(self, inserted_array: Array, shared: bool):
+        """The deletion takes no lock and waits for nobody: the holder of the file keeps its descriptor."""
+        adapter = inserted_array._adapter
+        main = adapter._get_main_path_to_file(inserted_array)
+        symlink = get_paths(inserted_array, adapter.collection_path).symlink / main.name
+        with Flock(main, shared=shared):
+            start = time.monotonic()
+            assert adapter.delete(inserted_array, background=False, _empty_trash=True, token=DefaultToken()) is None
+            assert time.monotonic() - start < 0.5
+            assert not main.exists()
+            assert not os.path.lexists(symlink)
+        assert adapter.is_deleted(inserted_array)
+        assert list(trash_of(adapter).iterdir()) == []
 
     def test_array_adapter_deletes_not_existing_array(
         self,
@@ -365,7 +390,7 @@ class TestArrayAdapter:
         assert symfile.exists()
         for f in (symfile, mainfile):
             os.remove(f)
-        array_adapter.delete(inserted_array, timeout=Sentinel, token=DefaultToken())
+        array_adapter.delete(inserted_array, background=False, _empty_trash=True, token=DefaultToken())
         assert not os.path.exists(filename)
 
     def test_array_adapter_clear(
@@ -605,8 +630,9 @@ def write_attributes(adapter, array, **kwargs):
     adapter.update_meta_custom_attributes(array, {}, **kwargs)
 
 
-def write_delete(adapter, array, **kwargs):
-    adapter.delete(array, **kwargs)
+def write_delete(adapter, array, *, timeout, token):
+    """Delete the array: the deletion takes no timeout, it waits for nobody."""
+    adapter.delete(array, background=False, _empty_trash=True, token=token)
 
 
 WRITES = {
@@ -615,6 +641,7 @@ WRITES = {
     "update_meta_custom_attributes": write_attributes,
     "delete": write_delete,
 }
+LOCKING_WRITES = [operation for operation in WRITES if operation != "delete"]
 
 
 class TestArrayAdapterCancellation:
@@ -637,7 +664,7 @@ class TestArrayAdapterCancellation:
         holder.release()
 
     @pytest.mark.timeout(10)
-    @pytest.mark.parametrize("operation", list(WRITES))
+    @pytest.mark.parametrize("operation", LOCKING_WRITES)
     def test_cancelled_while_waiting_for_the_lock_changes_nothing(
         self, inserted_array: Array, main_file: Path, operation
     ):
@@ -654,7 +681,7 @@ class TestArrayAdapterCancellation:
         assert main_file.read_bytes() == before
 
     @pytest.mark.timeout(10)
-    @pytest.mark.parametrize("operation", list(WRITES))
+    @pytest.mark.parametrize("operation", LOCKING_WRITES)
     def test_timeout_of_the_call_limits_the_wait(self, inserted_array: Array, main_file: Path, operation):
         start = time.monotonic()
         with Flock(main_file, shared=True), pytest.raises(DekerLockError):
@@ -686,6 +713,21 @@ class TestArrayAdapterCancellation:
         if operation == "clear":
             assert np.isnan(inserted_array[0, 0, 0].read())
 
+    def test_delete_cancelled_after_the_first_move_moves_everything(self, inserted_array: Array, mocker: MockerFixture):
+        adapter = inserted_array._adapter
+        main = adapter._get_main_path_to_file(inserted_array)
+        symlink = get_paths(inserted_array, adapter.collection_path).symlink / main.name
+        scope = SimpleToken()
+        with cancellation_scope(scope):
+            token = write_token()
+        real = deker_local_adapters.mixin.move_to_trash
+        mocker.patch.object(deker_local_adapters.mixin, "move_to_trash", side_effect=CancelScopeAndCall(scope, real))
+        adapter.delete(inserted_array, background=False, _empty_trash=True, token=token)
+        assert scope.cancelled
+        assert not main.exists()
+        assert not os.path.lexists(symlink)
+        assert list(trash_of(adapter).iterdir()) == []
+
     def test_read_cancelled_while_the_file_is_read_returns_no_data(self, inserted_array: Array, mocker: MockerFixture):
         adapter = inserted_array._adapter
         scope = SimpleToken()
@@ -715,7 +757,7 @@ class TestArrayAdapterCancellation:
 
 
 class TestDeleteAllByVidCancellation:
-    """The Arrays of a VArray are deleted all or none when the deletion is cancelled."""
+    """The Arrays of a VArray are moved to the trash all or none when the deletion is cancelled."""
 
     @pytest.fixture
     def array_adapter(self, inserted_varray: VArray):
@@ -731,10 +773,9 @@ class TestDeleteAllByVidCancellation:
             token = write_token()
         scope.cancel()
         with pytest.raises(TokenCancelledError):
-            array_adapter.delete_all_by_vid(
-                inserted_varray.id, inserted_varray._VArray__collection, timeout=Sentinel, token=token
-            )
+            array_adapter.delete_all_by_vid(inserted_varray.id, inserted_varray._VArray__collection, token=token)
         assert self.arrays_left(inserted_varray, array_adapter) == before > 0
+        assert list(trash_of(array_adapter).iterdir()) == []
 
     def test_cancelled_after_the_first_array_deletes_every_array(
         self, inserted_varray: VArray, array_adapter, mocker: MockerFixture
@@ -743,11 +784,30 @@ class TestDeleteAllByVidCancellation:
         with cancellation_scope(scope):
             token = write_token()
         mocker.patch.object(array_adapter, "_delete", side_effect=CancelScopeAndCall(scope, array_adapter._delete))
-        array_adapter.delete_all_by_vid(
-            inserted_varray.id, inserted_varray._VArray__collection, timeout=Sentinel, token=token
-        )
+        array_adapter.delete_all_by_vid(inserted_varray.id, inserted_varray._VArray__collection, token=token)
         assert scope.cancelled
         assert self.arrays_left(inserted_varray, array_adapter) == 0
+        array_adapter.empty_trash(background=False)
+
+    @pytest.mark.timeout(60)
+    def test_arrays_are_moved_by_their_symlinks_without_metadata_and_locks(
+        self, inserted_varray: VArray, array_adapter, mocker: MockerFixture
+    ):
+        """Each Array: its main file (the target of its symlink), then its symlink; a writer holding one is no bar."""
+        symlinks = list(array_adapter._adapter_iter(inserted_varray.id))
+        assert len(symlinks) > 1
+        expected = [path for symlink in symlinks for path in (symlink.readlink(), symlink)]
+        read_meta = mocker.spy(array_adapter, "read_meta")
+        move = mocker.spy(deker_local_adapters.mixin, "move_to_trash")
+        with Flock(symlinks[0].readlink()):
+            array_adapter.delete_all_by_vid(
+                inserted_varray.id, inserted_varray._VArray__collection, token=DefaultToken()
+            )
+        assert [call.args[0] for call in move.call_args_list] == expected
+        read_meta.assert_not_called()
+        assert self.arrays_left(inserted_varray, array_adapter) == 0
+        assert not (array_adapter.collection_path / array_adapter.symlinks_dir / inserted_varray.id).exists()
+        array_adapter.empty_trash(background=False)
 
 
 def read_data(adapter, array, **kwargs):
@@ -786,8 +846,56 @@ class MoveAwayAndCall:
         return self.method(path, *args, **kwargs)
 
 
+# what HDF5 raises when the file is renamed between its opening and its stat by name: no errno
+STAT_INFO_ERROR = "Unable to synchronously open file (can't retrieve stat info for file)"
+
+
+class FailToOpen:
+    """Stand for ``h5py.File``: fails to open as HDF5 does when the file is renamed while it is opened.
+
+    :param target: where the file is moved to first; ``None`` - the file stays
+    """
+
+    def __init__(self, target: Path | None) -> None:
+        self.target = target
+        self.calls = 0
+
+    def __call__(self, path, *args, **kwargs):
+        self.calls += 1
+        if self.target is not None:
+            Path(path).rename(self.target / Path(path).name)
+        raise OSError(STAT_INFO_ERROR)
+
+
 class TestArrayAdapterOfAFileGone:
     """A file gone between the lock and its opening is an Array that does not exist; a broken file stays its error."""
+
+    @pytest.mark.parametrize("operation", list(FILE_OPERATIONS))
+    def test_file_gone_while_it_is_opened(
+        self, inserted_array: Array, tmp_path: Path, mocker: MockerFixture, operation
+    ):
+        """The deletion moves the file to the trash while HDF5 opens it: HDF5 raises a bare OSError."""
+        adapter = inserted_array._adapter
+        call, _ = FILE_OPERATIONS[operation]
+        file = adapter._get_main_path_to_file(inserted_array)
+        open_file = FailToOpen(tmp_path)
+        mocker.patch.object(h5py, "File", side_effect=open_file)
+        with pytest.raises(DekerInstanceNotExistsError) as error:
+            call(adapter, inserted_array, timeout=Sentinel, token=DefaultToken())
+        assert str(error.value) == f"{file} doesn't exist"
+        assert open_file.calls == 1
+
+    @pytest.mark.parametrize("operation", list(FILE_OPERATIONS))
+    def test_failure_to_open_a_file_in_place_keeps_its_error(
+        self, inserted_array: Array, mocker: MockerFixture, operation
+    ):
+        adapter = inserted_array._adapter
+        call, _ = FILE_OPERATIONS[operation]
+        mocker.patch.object(h5py, "File", side_effect=FailToOpen(None))
+        with pytest.raises(OSError) as error:
+            call(adapter, inserted_array, timeout=Sentinel, token=DefaultToken())
+        assert type(error.value) is OSError
+        assert str(error.value) == STAT_INFO_ERROR
 
     @pytest.mark.parametrize("operation", list(FILE_OPERATIONS))
     def test_file_gone_after_the_lock(self, inserted_array: Array, tmp_path: Path, mocker: MockerFixture, operation):
@@ -870,15 +978,16 @@ class TestCreatorOfAnArrayOfAVArray:
         ],
     )
     def test_creator_meets_the_deletion_of_its_varray(
-        self, created_varray: VArray, point: str, gone: str | None, moved: int, tmp_path, mocker
+        self, created_varray: VArray, point: str, gone: str | None, moved: int, mocker
     ):
+        """The deletion runs at the point of the creator, in its thread: it takes no lock, so nothing waits."""
         array = inner_array(created_varray)
         adapter = array._adapter
         collection = adapter.collection_path
         varray_file, varray_symlink = created_paths(created_varray)
-        trash = Trash(tmp_path / "trash")
-        symlinks = collection / adapter.symlinks_dir / created_varray.id
-        hook = At(point, trash.delete_varray, varray_symlink, varray_file, symlinks)
+        trash = trash_of(adapter)
+        assert list(trash.iterdir()) == []
+        hook = At(point, partial(created_varray.delete, _empty_trash=False))
         watch_creator(mocker, array, hook)
         if gone is None:
             assert adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
@@ -889,7 +998,9 @@ class TestCreatorOfAnArrayOfAVArray:
             assert str(error.value) == f"{path} doesn't exist"
         assert hook.done
         assert files(collection) == [f"{collection.name}.json"]  # no file of the VArray or of its Arrays is left
-        assert len(files(trash.directory)) == moved
+        assert len(list(trash.iterdir())) == moved  # the files of the VArray and of its Arrays, nothing else
+        adapter.empty_trash(background=False)
+        assert list(trash.iterdir()) == []
 
     def test_symlink_of_the_varray_is_found_by_its_json_file(self, created_varray: VArray):
         """Guard against a false rollback: the path is built the way the VArray built it, from the json file."""

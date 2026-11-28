@@ -14,6 +14,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
+import errno
 import json
 import os
 
@@ -51,6 +52,25 @@ def flip_axes(data: ndarray | Numeric, axes: tuple[int, ...]) -> ndarray | Numer
     if not axes or np.ndim(data) == 0:
         return data
     return np.flip(data, axes)
+
+
+def open_file(path: Path, mode: str) -> h5py.File:
+    """Open an existing file of an array: the only place that does.
+
+    A deletion takes no lock, so the file may be moved to the trash while HDF5 opens it; HDF5 raises then an
+    ``OSError`` without an errno. A file that is not at its path anymore is a missing file, whatever HDF5 raised.
+
+    :param path: path to the file
+    :param mode: ``r`` to read, ``r+`` to write
+    :returns: the open file
+    :raises FileNotFoundError: if the file is not at its path
+    """
+    try:
+        return h5py.File(path, mode, locking=False)
+    except OSError as error:
+        if os.path.exists(path):
+            raise
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path)) from error
 
 
 class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
@@ -175,7 +195,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
             a scalar when the bounds select a single cell
         """
         self.logger.debug("trying to read data from %s", path)
-        with h5py.File(path, mode="r", locking=False) as f:
+        with open_file(path, "r") as f:
             self.logger.debug("%s opened in 'r'-mode", path)
             self.logger.debug("trying to read data from %s", path)
             ds: Dataset | None = f.get("data")
@@ -197,7 +217,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         :returns: the ``empty_cells`` dataset as stored
         :raises DekerArrayError: if the file has no counter
         """
-        with h5py.File(path, mode="r", locking=False) as f:
+        with open_file(path, "r") as f:
             if "empty_cells" not in f:
                 raise DekerArrayError(f"No empty cells counter in {path}. Try to delete and recreate the array.")
             return int(f["empty_cells"][()])
@@ -212,7 +232,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         :param fill_value: array fill_value
         :returns: number of cells holding the fill value
         """
-        with h5py.File(path, mode="r", locking=False) as f:
+        with open_file(path, "r") as f:
             if "data" not in f:
                 return calculate_total_cells_in_array(array_shape)
             return self._count_fill_values(f["data"][()], fill_value)
@@ -223,7 +243,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         :param path: path to hdf5 file
         :param empty_cells: the new value of the counter
         """
-        with h5py.File(path, mode="r+", locking=False) as f:
+        with open_file(path, "r+") as f:
             f["empty_cells"][()] = empty_cells
             f.flush()
 
@@ -235,7 +255,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         :raises DekerArrayError: if the file has no ``meta`` dataset
         """
         self.logger.debug("trying to read meta from %s", path)
-        with h5py.File(path, mode="r", locking=False) as f:
+        with open_file(path, "r") as f:
             self.logger.debug("%s opened in 'r'-mode", path)
             ds: Dataset = f.get("meta")
             if not ds:
@@ -273,7 +293,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         """
         try:
             self.logger.debug("trying to update data in %s", path)
-            with h5py.File(path, mode="r+", locking=False) as f:
+            with open_file(path, "r+") as f:
                 self.logger.debug("%s opened in 'r+'-mode", path)
                 empty_cells_ds: Dataset = f["empty_cells"]
                 total_cells = calculate_total_cells_in_array(shape)
@@ -346,7 +366,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         """
         try:
             self.logger.debug("trying to update meta in %s", path)
-            with h5py.File(path, "r+", locking=False) as f:
+            with open_file(path, "r+") as f:
                 self.logger.debug("%s opened in 'r+'-mode", path)
                 ds = f.get("meta")
                 if not ds:
@@ -376,7 +396,7 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         """
         try:
             self.logger.debug("trying to clear data in %s", path)
-            with h5py.File(path, "r+", locking=False) as f:
+            with open_file(path, "r+") as f:
                 self.logger.debug("%s opened in 'r+'-mode", path)
                 ds: Dataset | None = f.get("data")
                 if ds is not None:

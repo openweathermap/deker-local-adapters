@@ -38,6 +38,7 @@ from deker_tools.cancel import check, mark_started, resolve_timeout
 from deker_tools.path import is_empty
 from deker_tools.typings import SentinelType
 
+from deker_local_adapters.collection_adapter import empty_trash_directory, move_to_trash
 from deker_local_adapters.errors import DekerBrokenSymlinkError
 
 if TYPE_CHECKING:
@@ -92,11 +93,25 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
                     break
                 raise
 
+    @property
+    def trash_resource(self) -> Path:
+        """Return a path to the trash of the storage, next to the directory with collections."""
+        return Path(self.uri.path) / self.ctx.config.trash_directory
+
+    def _move_to_trash(self, file: Path) -> None:
+        """Move a file or a symlink of an array to the trash, then remove the directories above it that become empty.
+
+        :param file: the main file or the symlink; one that is gone already is not an error
+        """
+        move_to_trash(file, self.trash_resource, self.collection_path.parent)
+        self._remove_empty_parents(file)
+
     def _delete(self, symlink: Path) -> None:
-        """Delete the symlink and the main file it points to, with the directories that become empty.
+        """Move the main file the symlink points to, then the symlink, to the trash; empty directories above go too.
 
         The directories above both files are removed while they are empty, up to the data and symlinks
-        directories of the collection, which stay. A missing symlink or a missing main file is not an error.
+        directories of the collection, which stay. A missing symlink leaves nothing to move; a missing main file is
+        not an error, the symlink is moved anyway.
 
         :param symlink: path to the symlink file
         """
@@ -105,22 +120,19 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         except FileNotFoundError:
             check_storage_directory(self.collection_path.parent)
             return  # no symlink: nothing to delete
-        try:
-            os.remove(data)
-        except FileNotFoundError:  # the main file is gone already: the symlink is removed anyway
-            check_storage_directory(self.collection_path.parent)
-        symlink.unlink(missing_ok=True)
         for file in (data, symlink):
-            self._remove_empty_parents(file)
+            self._move_to_trash(file)
 
     @check_ctx_state
-    def delete(self, array: ArrayT, *, timeout: int | SentinelType, token: AbstractToken) -> None:
-        """Delete the files of the array.
+    def delete(self, array: ArrayT, *, background: bool, _empty_trash: bool, token: AbstractToken) -> None:
+        """Move the main file of the array, then its symlink, to the trash, taking no lock; then empty the trash.
+
+        The readers and the writer that hold the main file go on with it in the trash. ``LocalVArrayAdapter`` moves
+        the files of a VArray its own way.
 
         :param array: array instance
-        :param timeout: taken for the common signature of the adapters and not used here: the method takes no
-          lock; ``LocalArrayAdapter.delete`` waits for the lock of the file of an Array before it calls this
-          method, the json file of a VArray is deleted without a lock
+        :param background: empty the trash in a daemon thread and return at once
+        :param _empty_trash: empty the trash after the move; ``False`` - only move
         :param token: token of the write operation
         """
         check(token)
@@ -133,6 +145,17 @@ class LocalAdapterMixin(SelfLoggerMixin, IArrayAdapter[Path, ArrayT]):
         except Exception as e:
             self.logger.exception(e)
             raise e
+        if _empty_trash:
+            self.empty_trash(background=background)
+
+    @check_ctx_state
+    def empty_trash(self, *, background: bool) -> None:
+        """Remove everything from the trash of the storage.
+
+        :param background: return at once and remove in a daemon thread, which nobody waits for; its error goes to the
+          log
+        """
+        empty_trash_directory(self.trash_resource, background=background, logger=self.logger)
 
     def is_deleted(self, array: ArrayT) -> bool:
         """Check if the array was deleted.

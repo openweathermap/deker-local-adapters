@@ -219,7 +219,7 @@ class TestMixinEdges:
 
         paths = get_paths(inserted_array, array_collection.path)
         shutil.rmtree(paths.main)
-        local_array_adapter.delete(inserted_array, timeout=Sentinel, token=DefaultToken())
+        local_array_adapter.delete(inserted_array, background=False, _empty_trash=True, token=DefaultToken())
         assert not (paths.symlink / (inserted_array.id + local_array_adapter.file_ext)).exists()
 
     def test_empty_symlink_directory_finds_nothing(
@@ -277,9 +277,30 @@ class TestMixinEdges:
         paths = get_paths(inserted_array, array_collection.path)
         os.remove(paths.main / (inserted_array.id + local_array_adapter.file_ext))
         local_array_adapter.delete(
-            inserted_array, timeout=Sentinel, token=DefaultToken()
-        )  # the target is already gone, the symlink is removed anyway
+            inserted_array, background=False, _empty_trash=True, token=DefaultToken()
+        )  # the target is already gone, the symlink is moved anyway
         assert not (paths.symlink / (inserted_array.id + local_array_adapter.file_ext)).exists()
+
+
+class FirstRenameNotFound:
+    """Stand for ``os.rename``: the first rename moves its file, as another deletion would, and does not find it.
+
+    :param collections: the collections directory of the storage, taken away by the first rename too; ``None`` - kept
+    """
+
+    def __init__(self, collections: Path | None) -> None:
+        self.collections = collections
+        self.real = os.rename
+        self.calls = 0
+
+    def __call__(self, source, target, *args, **kwargs):
+        self.calls += 1
+        if self.calls > 1:
+            return self.real(source, target, *args, **kwargs)
+        self.real(source, Path(target).with_name("moved-by-another"))
+        if self.collections is not None:
+            self.real(self.collections, self.collections.with_name("collections-away"))
+        raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(source))
 
 
 class TestDeleteOfNeighbouringArrays:
@@ -329,7 +350,12 @@ class TestDeleteOfNeighbouringArrays:
         with ThreadPoolExecutor(max_workers=2) as executor:
             for _ in range(self.REPEATS):
                 arrays = self._neighbours(array_collection, local_array_adapter)
-                list(executor.map(partial(local_array_adapter.delete, timeout=Sentinel, token=DefaultToken()), arrays))
+                list(
+                    executor.map(
+                        partial(local_array_adapter.delete, background=False, _empty_trash=True, token=DefaultToken()),
+                        arrays,
+                    )
+                )
                 assert self._directories_left(array_collection, local_array_adapter) == []
 
     def test_a_directory_removed_by_the_neighbour_is_skipped(
@@ -338,7 +364,7 @@ class TestDeleteOfNeighbouringArrays:
         """A shared directory that is gone by the time of rmdir was removed by the other thread: the climb goes on."""
         first, second = self._neighbours(array_collection, local_array_adapter)
         shared = array_collection.path / local_array_adapter.data_dir / "8" / "c"
-        local_array_adapter.delete(first, timeout=Sentinel, token=DefaultToken())
+        local_array_adapter.delete(first, background=False, _empty_trash=True, token=DefaultToken())
         assert shared.exists()
         real_rmdir = os.rmdir
 
@@ -348,7 +374,7 @@ class TestDeleteOfNeighbouringArrays:
                 raise FileNotFoundError(2, "the neighbour was first", str(path))
 
         mocker.patch("deker_local_adapters.mixin.os.rmdir", rmdir_lost_to_the_neighbour)
-        local_array_adapter.delete(second, timeout=Sentinel, token=DefaultToken())
+        local_array_adapter.delete(second, background=False, _empty_trash=True, token=DefaultToken())
         assert self._directories_left(array_collection, local_array_adapter) == []
 
     def test_a_directory_filled_meanwhile_is_left(
@@ -357,7 +383,7 @@ class TestDeleteOfNeighbouringArrays:
         """A directory that is not empty anymore at rmdir (something was created in it) stays, without an error."""
         first, second = self._neighbours(array_collection, local_array_adapter)
         shared = array_collection.path / local_array_adapter.data_dir / "8" / "c"
-        local_array_adapter.delete(first, timeout=Sentinel, token=DefaultToken())
+        local_array_adapter.delete(first, background=False, _empty_trash=True, token=DefaultToken())
         real_rmdir = os.rmdir
 
         def rmdir_of_a_filled_directory(path: str | os.PathLike, **kwargs: object) -> None:
@@ -367,7 +393,7 @@ class TestDeleteOfNeighbouringArrays:
             real_rmdir(path, **kwargs)
 
         mocker.patch("deker_local_adapters.mixin.os.rmdir", rmdir_of_a_filled_directory)
-        local_array_adapter.delete(second, timeout=Sentinel, token=DefaultToken())
+        local_array_adapter.delete(second, background=False, _empty_trash=True, token=DefaultToken())
         assert (shared / "newcomer").exists()
         left = [shared.parent, shared, shared / "newcomer"]
         assert self._directories_left(array_collection, local_array_adapter) == left
@@ -381,23 +407,19 @@ class TestDeleteOfNeighbouringArrays:
         array = array_collection.create()
         mocker.patch("deker_local_adapters.mixin.os.rmdir", side_effect=PermissionError(errno.EACCES, "no"))
         with pytest.raises(PermissionError):
-            local_array_adapter.delete(array, timeout=Sentinel, token=DefaultToken())
+            local_array_adapter.delete(array, background=False, _empty_trash=True, token=DefaultToken())
+        mocker.stopall()
+        local_array_adapter.delete(array, background=False, _empty_trash=True, token=DefaultToken())  # the rest
 
-    def test_a_data_file_removed_meanwhile_is_not_an_error(
+    def test_a_data_file_moved_meanwhile_is_not_an_error(
         self, array_collection: Collection, local_array_adapter: LocalArrayAdapter, mocker: MockerFixture
     ):
-        """The data file may disappear between the existence check and the removal: the symlink is still removed."""
+        """Another deletion may move the data file first: the symlink is still moved."""
         array = array_collection.create()
         paths = get_paths(array, array_collection.path)
         file = array.id + local_array_adapter.file_ext
-        real_remove = os.remove
-
-        def remove_of_a_file_gone_meanwhile(path: str | os.PathLike, *args: object, **kwargs: object) -> None:
-            real_remove(path, *args, **kwargs)
-            raise FileNotFoundError(2, "gone meanwhile", str(path))
-
-        mocker.patch("deker_local_adapters.mixin.os.remove", remove_of_a_file_gone_meanwhile)
-        local_array_adapter.delete(array, timeout=Sentinel, token=DefaultToken())
+        mocker.patch.object(os, "rename", side_effect=FirstRenameNotFound(None))
+        local_array_adapter.delete(array, background=False, _empty_trash=True, token=DefaultToken())
         assert not (paths.main / file).exists()
         assert not (paths.symlink / file).exists()
         assert self._directories_left(array_collection, local_array_adapter) == []
@@ -844,21 +866,6 @@ class Trash:
             if (collection / name).is_dir():
                 self.move(collection / name)
 
-    def delete_varray(self, varray_symlink: Path, varray_file: Path, symlinks: Path) -> None:
-        """Move a VArray here as its deletion does: its symlink, then every Array found by its symlinks, its json file.
-
-        :param varray_symlink: symlink of the VArray
-        :param varray_file: json file of the VArray
-        :param symlinks: directory of the symlinks of the Arrays of the VArray
-        """
-        self.move(varray_symlink)
-        for directory, _, names in os.walk(symlinks):
-            for name in names:
-                symlink = Path(directory) / name
-                self.move(symlink.readlink())
-                self.move(symlink)
-        self.move(varray_file)
-
     def put_back(self, path: Path) -> None:
         """Put what was moved from the path back, for the fixtures; whatever was made at the path meanwhile comes here.
 
@@ -1100,7 +1107,9 @@ class TestNotFoundTellsAMissingStorageFromAMissingFile:
         adapter = array._adapter
         missing = Missing(adapter.collection_path.parent, storage_gone)
         _, symlink = self.files(array)
-        mocker.patch.object(os, "remove", side_effect=missing)
+        mocker.patch.object(
+            os, "rename", side_effect=FirstRenameNotFound(missing.collections if storage_gone else None)
+        )
         check_not_found(lambda: adapter._delete(symlink), missing, None)
         assert not os.path.lexists(symlink) or storage_gone
 

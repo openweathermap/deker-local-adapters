@@ -36,7 +36,7 @@ from tests.parameters.common import random_string
 from tests.parameters.uri import embedded_uri
 
 from deker_local_adapters import AdaptersFactory, LocalCollectionAdapter
-from deker_local_adapters.collection_adapter import empty_trash_directory
+from deker_local_adapters.collection_adapter import empty_trash_directory, move_to_trash
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
 
 
@@ -814,6 +814,88 @@ class TestEmptyTrashDirectory:
             (storage / "trash" / "left").write_text("file")
             assert client._adapter.empty_trash(background=False) is None
             assert list((storage / "trash").iterdir()) == []
+
+
+class TestMoveToTrash:
+    """The only code of the move to the trash: one rename under a flat random name."""
+
+    @pytest.fixture
+    def storage(self, tmp_path: Path) -> Path:
+        """A storage of the test: its collections directory with a collection, and its trash.
+
+        :param tmp_path: directory of the test
+        """
+        storage = tmp_path / "storage"
+        (storage / "collections" / "c" / "array_data").mkdir(parents=True)
+        (storage / "trash").mkdir()
+        return storage
+
+    @staticmethod
+    def move(storage: Path, path: Path) -> None:
+        """Move into the trash of the storage.
+
+        :param storage: the storage
+        :param path: what to move
+        """
+        assert move_to_trash(path, storage / "trash", storage / "collections") is None
+
+    @pytest.mark.parametrize("kind", ["file", "directory", "symlink"])
+    def test_moved_in_one_rename_under_a_flat_random_name(self, storage: Path, kind: str, mocker: MockerFixture):
+        source = storage / "collections" / "c" / "array_data" / "moved"
+        target = storage / "collections" / "c" / "c.json"
+        target.write_text("target")
+        if kind == "file":
+            source.write_text("content")
+        elif kind == "directory":
+            (source / "inner").mkdir(parents=True)
+            (source / "inner" / "file").write_text("content")
+        else:
+            source.symlink_to(target)
+        rename = mocker.spy(os, "rename")
+        self.move(storage, source)
+        assert not os.path.lexists(source)
+        (moved,) = (storage / "trash").iterdir()
+        rename.assert_called_once_with(source, moved)
+        assert len(moved.name) == 32
+        assert int(moved.name, 16) >= 0  # a hex name, no part of the source path in it
+        if kind == "file":
+            assert moved.read_text() == "content"
+        elif kind == "directory":
+            assert (moved / "inner" / "file").read_text() == "content"
+        else:
+            assert moved.readlink() == target
+            assert target.read_text() == "target"  # the target stays where it is
+
+    def test_moves_of_one_name_get_their_own_names(self, storage: Path):
+        source = storage / "collections" / "c" / "array_data" / "moved"
+        for content in ("first", "second"):
+            source.write_text(content)
+            self.move(storage, source)
+        assert sorted(path.read_text() for path in (storage / "trash").iterdir()) == ["first", "second"]
+
+    def test_missing_source_with_the_storage_directories_in_place_is_not_an_error(
+        self, storage: Path, mocker: MockerFixture
+    ):
+        """Another operation moved it already."""
+        critical = mocker.patch.object(logging.getLogger("Deker"), "critical")
+        self.move(storage, storage / "collections" / "c" / "array_data" / "gone")
+        assert list((storage / "trash").iterdir()) == []
+        critical.assert_not_called()
+
+    @pytest.mark.parametrize("directory", ["trash", "collections"])
+    def test_missing_storage_directory_is_critical(self, storage: Path, mocker: MockerFixture, directory: str):
+        source = storage / "collections" / "c" / "array_data" / "moved"
+        source.write_text("content")
+        gone = storage / directory
+        gone.rename(storage / "away")
+        critical = mocker.patch.object(logging.getLogger("Deker"), "critical")
+        with pytest.raises(DekerCriticalError) as error:
+            move_to_trash(source, storage / "trash", storage / "collections")
+        assert str(error.value) == MISSING.format(gone)
+        critical.assert_called_once_with(MISSING.format(gone))
+        assert not gone.exists()  # not made again
+        if directory == "trash":
+            assert source.read_text() == "content"  # left where it was
 
 
 class TestIterationTellsAMissingStorageFromAMissingFile:

@@ -18,7 +18,6 @@ import json
 import os
 
 from collections.abc import Generator
-from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional, cast
 
@@ -54,7 +53,7 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
 
     An ``Array`` is a main file in the data directory, named by its id, and a symlink to it in the symlinks
     directory, placed by its primary attributes. The reads hold a shared lock on the main file, the writes,
-    the clears, the attribute updates and the deletion an exclusive one.
+    the clears and the attribute updates an exclusive one; the deletion takes no lock.
     """
 
     def __init__(
@@ -207,36 +206,6 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
             raise DekerInstanceNotExistsError(f"{filename} doesn't exist") from None
         return result
 
-    @WriteArrayLock()
-    def _delete_held(self, array: Array, *, timeout: int | SentinelType, token: AbstractToken) -> None:
-        """Delete the array holding its file exclusively.
-
-        :param array: Array instance
-        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``WriteArrayLock``); the
-          body only passes it on to ``LocalAdapterMixin.delete``, which does not use it: the lock waits for the
-          readers and the writer of the file no longer than that
-        :param token: token of the write operation
-        """
-        super().delete(array, timeout=timeout, token=token)
-
-    @check_ctx_state
-    def delete(self, array: Array, *, timeout: int | SentinelType, token: AbstractToken) -> None:
-        """Delete the array, waiting for the readers and writers of its file to leave.
-
-        :param array: Array instance
-        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client
-        :param token: token of the write operation
-        :raises DekerLockError: if the file is still held when the timeout is over
-        """
-        check(token)
-        if self._get_main_path_to_file(array).exists():
-            self._delete_held(array, timeout=timeout, token=token)
-        else:
-            # the main file is gone already: the symlink is removed anyway
-            super().delete(array, timeout=timeout, token=token)
-
     @check_ctx_state
     @WriteArrayLock()
     def update(
@@ -353,25 +322,23 @@ class LocalArrayAdapter(LocalAdapterMixin[Array], BaseArrayAdapter[Path]):
                     yield symlink
 
     @check_ctx_state
-    def delete_all_by_vid(
-        self, vid: str, collection: "Collection", *, timeout: int | SentinelType, token: AbstractToken
-    ) -> None:
-        """Delete all the Arrays of a VArray, each waiting for its readers and writers.
+    def delete_all_by_vid(self, vid: str, collection: "Collection", *, token: AbstractToken) -> None:
+        """Move every Array of a VArray to the trash, one after another, taking no lock; the trash is not emptied.
 
-        Once one Array is started, every Array is deleted whatever happens to the token: the deletion of a VArray
-        is cancelled only before any of its files is touched.
+        The Arrays are found by their symlinks in the directory of the VArray id and by the targets of the symlinks,
+        without reading their metadata. Once one Array is started, every Array is moved whatever happens to the token:
+        the deletion of a VArray is cancelled only before any of its files is touched.
 
         :param vid: VArray id
-        :param collection: collection instance
-        :param timeout: seconds to wait for the lock of the file as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client
+        :param collection: taken for the common signature of the adapters and not used here: the Arrays are found by
+          their symlinks
         :param token: token of the write operation
         """
         check(token)
+        mark_started(token)
         try:
-            metas = self.executor.map(self.read_meta, self._adapter_iter(vid))
-            arrays = [Array._create_from_meta(collection, meta, self) for meta in metas]
-            list(self.executor.map(partial(self.delete, timeout=timeout, token=token), arrays))
+            for symlink in list(self._adapter_iter(vid)):
+                self._delete(symlink)
         except Exception as e:
             self.logger.exception(e)
             raise e

@@ -20,6 +20,7 @@ import logging
 import os
 import shutil
 import threading
+import uuid
 
 from collections.abc import Callable, Generator
 from pathlib import Path
@@ -110,6 +111,23 @@ def _empty_trash_in_background(trash: Path, logger: logging.Logger) -> None:
         pass  # logged as critical where it is raised
     except Exception as e:  # noqa: BLE001  # nobody waits for the thread: the log is the only one to tell
         logger.error(e)
+
+
+def move_to_trash(path: Path, trash: Path, collections: Path) -> None:
+    """Move a file, a symlink or a directory to the trash of the storage in one rename, under a flat random name.
+
+    The only code of the move to the trash. What is gone already is not an error: another operation moved it. Unless
+    the trash or the collections directory of the storage is gone: that is critical.
+
+    :param path: what to move
+    :param trash: the trash directory of the storage
+    :param collections: the collections directory of the storage
+    """
+    try:
+        os.rename(path, trash / uuid.uuid4().hex)
+    except FileNotFoundError:
+        check_storage_directory(trash)
+        check_storage_directory(collections)
 
 
 class LocalCollectionAdapter(BaseCollectionAdapter[Path]):

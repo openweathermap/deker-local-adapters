@@ -27,6 +27,7 @@ from deker.arrays import VArray
 from deker.ctx import CTX
 from deker.errors import DekerArrayError, DekerInstanceNotExistsError
 from deker.locks import UpdateMetaAttributeLock
+from deker.tools import get_paths
 from deker.tools.decorators import check_ctx_state
 from deker.tools.path import check_storage_directory
 from deker.types import ArrayMeta, Data, Numeric, Slice
@@ -136,6 +137,36 @@ class LocalVArrayAdapter(LocalAdapterMixin[VArray], BaseVArrayAdapter[Path]):
         """
         with open(main_filename, "x", encoding="utf-8") as f:
             f.write(array._create_meta())
+
+    @check_ctx_state
+    def delete(self, array: VArray, *, background: bool, _empty_trash: bool, token: AbstractToken) -> None:
+        """Move the symlink of the VArray to the trash, taking no lock; then empty the trash if asked.
+
+        Without its symlink the VArray is not found by its attributes and the creators of its Arrays see it gone. Its
+        Arrays follow, its json file goes last, by ``delete_main_file``.
+
+        :param array: VArray instance
+        :param background: empty the trash in a daemon thread and return at once
+        :param _empty_trash: empty the trash after the move; ``False`` - only move
+        :param token: token of the write operation
+        """
+        check(token)
+        mark_started(token)
+        self._move_to_trash(get_paths(array, self.collection_path).symlink / (array.id + self.file_ext))
+        if _empty_trash:
+            self.empty_trash(background=background)
+
+    @check_ctx_state
+    def delete_main_file(self, array: VArray, *, background: bool, _empty_trash: bool) -> None:
+        """Move the json file of the VArray to the trash, the last step of its deletion; then empty the trash if asked.
+
+        :param array: VArray instance
+        :param background: empty the trash in a daemon thread and return at once
+        :param _empty_trash: empty the trash after the move; ``False`` - only move
+        """
+        self._move_to_trash(get_paths(array, self.collection_path).main / (array.id + self.file_ext))
+        if _empty_trash:
+            self.empty_trash(background=background)
 
     @check_ctx_state
     def read_meta(self, array: VArray | Path) -> ArrayMeta:

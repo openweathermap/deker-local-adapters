@@ -111,8 +111,8 @@ class TestVArrayAdapterMethods:
         assert (paths.main / filename).read_text() == "foreign"
         assert not (paths.symlink / filename).exists()
 
-    def test_varray_adapter_delete_varray(self, varray: VArray):
-        """Test delete without inner arrays."""
+    def test_varray_adapter_delete_varray(self, varray: VArray, mocker: MockerFixture):
+        """The deletion moves the symlink of the VArray, the json file goes by its own method, after the Arrays."""
         find = varray._VArray__collection.filter({"id": varray.id})
         array = find.first()
         assert array is None
@@ -121,11 +121,36 @@ class TestVArrayAdapterMethods:
         array = find.first()
         assert array is not None
         paths = get_paths(varray, varray._VArray__collection.path)
-        adapter.delete(varray, timeout=Sentinel, token=DefaultToken())
+        name = array.id + adapter.file_ext
+        trash = Path(adapter.uri.path) / adapter.ctx.config.trash_directory
+        empty_trash = mocker.spy(adapter, "empty_trash")
+        assert adapter.delete(varray, background=False, _empty_trash=False, token=DefaultToken()) is None
+        assert not os.path.lexists(paths.symlink / name)
+        assert (paths.main / name).is_file()
+        (moved,) = trash.iterdir()
+        assert moved.readlink() == paths.main / name
+        assert adapter.delete_main_file(varray, background=False, _empty_trash=False) is None
+        empty_trash.assert_not_called()
         assert find.first() is None
-        assert not (paths.symlink / array.id).exists()
-        assert not (paths.main / array.id).exists()
         assert not paths.main.exists()
+        assert len(list(trash.iterdir())) == 2
+        assert adapter.delete_main_file(varray, background=False, _empty_trash=True) is None  # gone: not an error
+        empty_trash.assert_called_once_with(background=False)
+        assert list(trash.iterdir()) == []
+
+    @pytest.mark.parametrize("background", [False, True])
+    def test_varray_adapter_delete_empties_the_trash_when_asked(
+        self, varray: VArray, mocker: MockerFixture, background: bool
+    ):
+        adapter = varray._adapter
+        adapter.create(varray, timeout=Sentinel, token=DefaultToken())
+        empty_trash = mocker.patch("deker_local_adapters.mixin.empty_trash_directory")
+        adapter.delete(varray, background=background, _empty_trash=True, token=DefaultToken())
+        trash = Path(adapter.uri.path) / adapter.ctx.config.trash_directory
+        empty_trash.assert_called_once_with(trash, background=background, logger=adapter.logger)
+        mocker.stopall()
+        adapter.delete_main_file(varray, background=False, _empty_trash=True)
+        assert list(trash.iterdir()) == []
 
     def test_varray_adapter_clears_varray_directories(self, varray: VArray, ctx):
         """Test delete without inner arrays."""
@@ -143,7 +168,8 @@ class TestVArrayAdapterMethods:
             vsubset.update(update_data)
 
         paths = get_paths(varray, varray._VArray__collection.path)
-        adapter.delete(varray, timeout=Sentinel, token=DefaultToken())
+        adapter.delete(varray, background=False, _empty_trash=False, token=DefaultToken())
+        adapter.delete_main_file(varray, background=False, _empty_trash=True)
         assert find.first() is None
         assert not (paths.symlink / array.id).exists()
         assert not (paths.main / array.id).exists()
