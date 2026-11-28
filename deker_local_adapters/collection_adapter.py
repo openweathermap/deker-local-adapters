@@ -18,7 +18,6 @@ import errno
 import json
 import logging
 import os
-import shutil
 import threading
 import uuid
 
@@ -134,8 +133,8 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
     """Adapter of the collections of a local storage.
 
     A collection is a directory under the collections directory of the storage, named by the collection,
-    with a json file of the same name holding its metadata; ``<collection>.lock`` next to the directory is
-    held while the collection is created or cleared and stays as its marker.
+    with a json file of the same name holding its metadata. The json file is the lock of the collection while it is
+    created; an empty one is a collection not created yet.
     """
 
     def __init__(self, ctx: CTX) -> None:
@@ -152,41 +151,40 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
         self.collections_resource.mkdir(parents=True, exist_ok=True)
         self.trash_resource.mkdir(exist_ok=True)
 
-    def __create_path(self, name: str) -> Path:
-        """Create Collection path in the file system.
-
-        :param name: Collection name
-        :returns: path to the collection directory
-        :raises DekerCollectionAlreadyExistsError: if the directory exists
-        """
-        path = self.collections_resource / name
-        try:
-            os.mkdir(path)  # never the collections directory: the client creates it
-            return path
-        except FileExistsError:
-            raise DekerCollectionAlreadyExistsError(f"Collection {name} already exists")
-
-    def __create(self, coll_name: str, data: dict, coll_path: Path) -> None:
-        """Write the metadata file of the collection into its directory.
-
-        :param coll_name: Collection name
-        :param data: metadata of the collection
-        :param coll_path: directory of the collection
-        """
-        if coll_path.exists():
-            path = coll_path / (coll_name + self.file_ext)
-            with open(path, mode="w") as f:
-                f.write(json.dumps(data))
-
-    @check_ctx_state
     @CollectionLock()
-    def create(self, collection: "Collection", *, timeout: int | SentinelType, token: AbstractToken) -> None:
-        """Add collection to the storage and create file structure, holding the collection lock.
+    def __write(self, collection: "Collection", *, timeout: int | SentinelType, token: AbstractToken) -> None:
+        """Write the metadata file of the collection, holding the collection lock, unless it is written already.
+
+        The lock makes the directory of the collection and its metadata file, empty, when they are not there.
 
         :param collection: Collection to be created
         :param timeout: seconds to wait for the lock of the collection as the call gave them; ``Sentinel`` -
           ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``CollectionLock``), not by
-          its body: the lock waits for another creation or clearing of the collection no longer than that
+          its body: the lock waits for another creation of the collection no longer than that
+        :param token: token of the write operation, started already; read by the lock decorator while it waits
+        :raises DekerCollectionAlreadyExistsError: if the metadata file is written: the collection exists
+        :raises DekerCriticalError: if the collections directory of the storage does not exist
+        """
+        path = self.collections_resource / collection.name / (collection.name + self.file_ext)
+        try:
+            if path.stat().st_size:
+                raise DekerCollectionAlreadyExistsError(f"Collection {collection.name} already exists")
+            with open(path, mode="w") as f:
+                f.write(json.dumps(collection.as_dict))
+        except FileNotFoundError:
+            check_storage_directory(self.collections_resource)  # deleted under the lock: created, then deleted
+
+    @check_ctx_state
+    def create(self, collection: "Collection", *, timeout: int | SentinelType, token: AbstractToken) -> None:
+        """Add collection to the storage: its directory and its metadata file, written under the collection lock.
+
+        A deletion of the collection that comes while the lock is held takes no lock and is after the creation: the
+        creation returns, and the collection does not exist.
+
+        :param collection: Collection to be created
+        :param timeout: seconds to wait for the lock of the collection as the call gave them; ``Sentinel`` -
+          ``write_lock_timeout`` of the client. Passed to the method that holds the lock (``CollectionLock``): the
+          lock waits for another creation of the collection no longer than that
         :param token: token of the write operation
         :raises DekerMemoryError: if one array of the collection would not fit the memory limit, unless the
           check is skipped by the client
@@ -199,9 +197,7 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
             if not self.ctx.config.skip_collection_create_memory_check:
                 check_memory(shape, schema.dtype, self.ctx.config.memory_limit)
             mark_started(token)
-            coll_path = self.__create_path(collection.name)
-            prepared = collection.as_dict
-            self.__create(coll_name=collection.name, data=prepared, coll_path=coll_path)
+            self.__write(collection, timeout=timeout, token=token)
         except Exception as e:
             self.logger.exception(e)
             raise e
@@ -212,66 +208,88 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
 
         :param name: Collection name
         :returns: collection metadata as a dict
-        :raises DekerCollectionNotExistsError: if there is no collection of the name
+        :raises DekerCollectionNotExistsError: if there is no collection of the name, or its metadata file is empty:
+          the collection is not created yet
         """
-        coll_path = self.collections_resource / name
-        path = coll_path / (name + self.file_ext)
-        if path.exists():
+        path = self.collections_resource / name / (name + self.file_ext)
+        try:
             with open(path) as f:
-                data = json.loads(f.read())
-                return data
+                text = f.read()
+        except FileNotFoundError:
+            text = ""  # no file, or taken away by a deletion meanwhile
+        if text:
+            return json.loads(text)
         check_storage_directory(self.collections_resource)
         raise DekerCollectionNotExistsError(f"{name} collection doesn't exist")
 
     @check_ctx_state
-    def delete(self, collection: "Collection", *, timeout: int | SentinelType, token: AbstractToken) -> None:
-        """Delete the directory of the collection with everything in it, and its lock file.
+    def delete(self, collection: "Collection", *, background: bool, _empty_trash: bool, token: AbstractToken) -> None:
+        """Move the directory of the collection to the trash in one rename, taking no lock; then empty the trash.
 
-        A directory that is gone already is not an error; any other failure to remove it is raised. The deletion
-        takes no lock: the timeout is not used.
+        The readers and the writers of its arrays go on with their files in the trash. A directory that is gone already
+        is not an error; any other failure to move it is raised.
 
         :param collection: Collection to delete
-        :param timeout: not used
+        :param background: empty the trash in a daemon thread and return at once
+        :param _empty_trash: empty the trash after the move; ``False`` - only move
         :param token: token of the write operation
         """
         check(token)
         mark_started(token)
-        try:
-            try:
-                shutil.rmtree(self.collections_resource / collection.name)
-            except FileNotFoundError:
-                check_storage_directory(self.collections_resource)
-            Path.unlink(self.collections_resource / (collection.name + ".lock"), missing_ok=True)
-        except Exception as e:
-            self.logger.exception(e)
-            raise e
+        move_to_trash(self.collections_resource / collection.name, self.trash_resource, self.collections_resource)
+        if _empty_trash:
+            self.empty_trash(background=background)
+
+    @staticmethod
+    def __remove_broken_symlinks(directory: Path) -> None:
+        """Remove the symlinks under the directory that point to a missing file.
+
+        A creator makes the file of an array before its symlink, so a symlink without its file is never an array being
+        created: its file is moved away.
+
+        :param directory: a symlinks directory of the collection; a missing one has nothing to remove
+        """
+        for root, _, names in os.walk(directory):
+            for name in names:
+                symlink = Path(root) / name
+                if not symlink.exists():
+                    symlink.unlink(missing_ok=True)
 
     @check_ctx_state
-    @CollectionLock()
-    def clear(self, collection: "Collection", *, timeout: int | SentinelType, token: AbstractToken) -> None:
-        """Remove everything from the directory of the collection but its metadata file, holding the collection lock.
+    def clear(self, collection: "Collection", *, background: bool, _empty_trash: bool, token: AbstractToken) -> None:
+        """Move everything of the collection but its metadata file to the trash, taking no lock; then empty the trash.
+
+        The directories go one by one, in one thread: the symlinks of the VArrays, the symlinks of the Arrays, the data
+        of the VArrays, the data of the Arrays, then whatever else lies in the directory of the collection; a directory
+        made again by a creator meanwhile stays. A creator may make its file before the data is moved and its symlink
+        after the symlinks are: the symlinks left without their files are removed at the end. The readers and the
+        writers of the arrays go on with their files in the trash.
 
         :param collection: Collection to be cleared
-        :param timeout: seconds to wait for the lock of the collection as the call gave them; ``Sentinel`` -
-          ``write_lock_timeout`` of the client. Read by the lock decorator of the method (``CollectionLock``), not by
-          its body: the lock waits for another creation or clearing of the collection no longer than that
+        :param background: empty the trash in a daemon thread and return at once
+        :param _empty_trash: empty the trash after the moves; ``False`` - only move
         :param token: token of the write operation
         """
         check(token)
         mark_started(token)
+        directory = self.collections_resource / collection.name
+        config = self.ctx.config
+        symlinks = (config.varray_symlinks_directory, config.array_symlinks_directory)
+        moved = (*symlinks, config.varray_data_directory, config.array_data_directory)
+        for name in moved:
+            move_to_trash(directory / name, self.trash_resource, self.collections_resource)
         try:
-            for root, dirs, files in os.walk(self.collections_resource / collection.name):
-                for f in files:
-                    save = False
-                    if f == collection.name + self.file_ext:
-                        save = True
-                    if not save:
-                        os.remove(os.path.join(root, f))
-                for d in dirs:
-                    shutil.rmtree(os.path.join(root, d))
-        except Exception as e:
-            self.logger.exception(e)
-            raise e
+            names = os.listdir(directory)
+        except FileNotFoundError:
+            check_storage_directory(self.collections_resource)
+            names = []  # the collection is deleted meanwhile: nothing is left to move
+        for name in names:
+            if name not in moved and name != collection.name + self.file_ext:
+                move_to_trash(directory / name, self.trash_resource, self.collections_resource)
+        for name in symlinks:
+            self.__remove_broken_symlinks(directory / name)
+        if _empty_trash:
+            self.empty_trash(background=background)
 
     @property
     def collections_resource(self) -> Path:
@@ -323,8 +341,5 @@ class LocalCollectionAdapter(BaseCollectionAdapter[Path]):
                     try:
                         meta = self.read(directory.name)
                     except DekerCollectionNotExistsError:
-                        continue  # no collection file
-                    except FileNotFoundError:
-                        check_storage_directory(self.collections_resource)
-                        continue  # the collection file is gone since it was checked
+                        continue  # no collection file, or an empty one
                     yield meta

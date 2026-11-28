@@ -8,6 +8,8 @@ import threading
 import time
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
+from functools import partial
 from pathlib import Path
 from uuid import uuid4
 
@@ -21,11 +23,11 @@ from deker.errors import (
     DekerCollectionAlreadyExistsError,
     DekerCollectionNotExistsError,
     DekerCriticalError,
-    DekerLockError,
     DekerMemoryError,
     DekerTrashError,
 )
 from deker.flock import Flock
+from deker.locks import CollectionLock
 from deker.schemas import ArraySchema, DimensionSchema
 from deker_tools.cancel import TokenCancelledError
 from deker_tools.typings import Sentinel
@@ -35,9 +37,22 @@ from tests.conftest import MISSING, Missing, check_not_found
 from tests.parameters.common import random_string
 from tests.parameters.uri import embedded_uri
 
+import deker_local_adapters.collection_adapter
+
 from deker_local_adapters import AdaptersFactory, LocalCollectionAdapter
 from deker_local_adapters.collection_adapter import empty_trash_directory, move_to_trash
 from deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter import HDF5StorageAdapter
+
+
+def files_under(root: Path) -> list[str]:
+    """List the files and the symlinks under a directory, relative to it; the directories are not listed.
+
+    :param root: directory to walk
+    :returns: sorted relative paths
+    """
+    return sorted(
+        os.path.relpath(os.path.join(directory, name), root) for directory, _, names in os.walk(root) for name in names
+    )
 
 
 def fill_collections_directory(path: Path, names: tuple[str, ...]) -> None:
@@ -69,20 +84,22 @@ class TestCollectionAdapter:
         :param array_schema: ArraySchema instance
         """
         name = random_string()
-        collection_adapter.create(
-            Collection(
-                name=name,
-                schema=array_schema,
-                adapter=collection_adapter,
-                factory=factory,
-                storage_adapter=HDF5StorageAdapter,
-            ),
-            timeout=Sentinel,
-            token=DefaultToken(),
+        collection = Collection(
+            name=name,
+            schema=array_schema,
+            adapter=collection_adapter,
+            factory=factory,
+            storage_adapter=HDF5StorageAdapter,
         )
-        assert root_path.joinpath(factory.ctx.config.collections_directory).joinpath(name).exists()
-        # the lock file of the creation stays as the marker of the collection
-        assert root_path.joinpath(factory.ctx.config.collections_directory).joinpath(name + ".lock").exists()
+        collections = root_path.joinpath(factory.ctx.config.collections_directory)
+        try:
+            assert collection_adapter.create(collection, timeout=Sentinel, token=DefaultToken()) is None
+            assert json.loads((collections / name / f"{name}.json").read_text()) == json.loads(
+                json.dumps(collection.as_dict)
+            )
+            assert not (collections / f"{name}.lock").exists()  # the lock of the collection is its json file
+        finally:
+            collection.delete()
 
     def test_collection_adapter_create_collection_memory_error(
         self,
@@ -116,6 +133,7 @@ class TestCollectionAdapter:
                 timeout=Sentinel,
                 token=DefaultToken(),
             )
+        assert not (collection_adapter.collections_resource / col_name).exists()  # checked before the lock
 
     @pytest.mark.parametrize(
         ("splitter", "expected"),
@@ -197,40 +215,73 @@ class TestCollectionAdapter:
             if col_from_dict:
                 col_from_dict.delete()
 
+    @pytest.mark.parametrize("background", [False, True])
     def test_collection_adapter_deletes_collection(
         self,
         collection_adapter: LocalCollectionAdapter,
         array_collection: Collection,
-        root_path: Path,
+        mocker: MockerFixture,
+        background: bool,
     ):
-        """Tests if array_collection adapter deletes array_collection from db properly.
-
-        :param collection_adapter: array_collection adapter
-        :param array_collection: Pre created array_collection
-        :param root_path: Path to collections directory
-        """
-        collection_adapter.delete(array_collection, timeout=Sentinel, token=DefaultToken())
+        """The directory of the collection is moved to the trash in one rename; the trash is emptied only when asked."""
+        array_collection.create()
+        before = files_under(array_collection.path)
+        trash = collection_adapter.trash_resource
+        move = mocker.spy(deker_local_adapters.collection_adapter, "move_to_trash")
+        empty = mocker.spy(deker_local_adapters.collection_adapter, "empty_trash_directory")
+        assert (
+            collection_adapter.delete(array_collection, background=background, _empty_trash=False, token=DefaultToken())
+            is None
+        )
+        move.assert_called_once_with(array_collection.path, trash, collection_adapter.collections_resource)
+        empty.assert_not_called()
         assert not os.path.exists(array_collection.path)
-        assert not os.path.exists(array_collection.path.parent / (array_collection.name + ".lock"))
+        (moved,) = trash.iterdir()
+        assert files_under(moved) == before
+        collection_adapter.empty_trash(background=False)
+        assert list(trash.iterdir()) == []
+
+    @pytest.mark.parametrize("operation", ["delete", "clear"])
+    @pytest.mark.parametrize("background", [False, True])
+    def test_collection_adapter_empties_the_trash_when_asked(
+        self,
+        collection_adapter: LocalCollectionAdapter,
+        array_collection: Collection,
+        mocker: MockerFixture,
+        operation: str,
+        background: bool,
+    ):
+        """The trash is emptied after the moves, once, by the background asked; the fixture empties it afterwards."""
+        array_collection.create()
+        empty = mocker.patch.object(deker_local_adapters.collection_adapter, "empty_trash_directory")
+        getattr(collection_adapter, operation)(
+            array_collection, background=background, _empty_trash=True, token=DefaultToken()
+        )
+        empty.assert_called_once_with(
+            collection_adapter.trash_resource, background=background, logger=collection_adapter.logger
+        )
+        assert files_under(array_collection.path) == (
+            [] if operation == "delete" else [f"{array_collection.name}.json"]
+        )
 
     def test_collection_adapter_delete_tolerates_a_collection_already_gone(
         self, collection_adapter: LocalCollectionAdapter, array_collection: Collection
     ):
-        """Deleting a collection whose directory is gone already is not an error: the lock file is removed anyway."""
+        """Deleting a collection whose directory is gone already is not an error: another deletion moved it."""
         shutil.rmtree(array_collection.path)
-        lock = array_collection.path.parent / (array_collection.name + ".lock")
-        assert lock.exists()
-        collection_adapter.delete(array_collection, timeout=Sentinel, token=DefaultToken())
-        assert not lock.exists()
+        assert (
+            collection_adapter.delete(array_collection, background=False, _empty_trash=False, token=DefaultToken())
+            is None
+        )
+        assert list(collection_adapter.trash_resource.iterdir()) == []
 
-    def test_collection_adapter_delete_raises_when_the_directory_cannot_be_removed(
+    def test_collection_adapter_delete_raises_when_the_directory_cannot_be_moved(
         self, collection_adapter: LocalCollectionAdapter, array_collection: Collection, mocker: MockerFixture
     ):
-        """A failure to remove the directory is not swallowed: the collection would stay with its files."""
-        # a real OSError carries errno and strerror: rmtree of Python 3.12+ adds the filename to it before raising
-        mocker.patch.object(os, "rmdir", side_effect=PermissionError(errno.EACCES, "read-only storage"))
+        """A failure to move the directory is not swallowed: the collection would stay with its files."""
+        mocker.patch.object(os, "rename", side_effect=PermissionError(errno.EACCES, "read-only storage"))
         with pytest.raises(PermissionError, match="read-only storage"):
-            collection_adapter.delete(array_collection, timeout=Sentinel, token=DefaultToken())
+            collection_adapter.delete(array_collection, background=False, _empty_trash=False, token=DefaultToken())
         assert os.path.exists(array_collection.path)
 
     def test_collection_adapter_get_collection(
@@ -248,27 +299,40 @@ class TestCollectionAdapter:
 
     def test_collection_adapter_clear(
         self,
-        array_collection: Collection,
+        varray_collection: Collection,
         collection_adapter: LocalCollectionAdapter,
-        root_path: Path,
+        mocker: MockerFixture,
     ):
-        """Tests clearing data directory.
-
-        :param array_collection: Pre created collection
-        :param collection_adapter: collection adapter
-        :param root_path: Path to collections directory
+        """The inner directories go to the trash one by one: the symlinks of the VArrays, of the Arrays, the data of
+        the VArrays, of the Arrays; then whatever else lies in the collection; its metadata file stays.
         """
-        collection_adapter.clear(array_collection, timeout=Sentinel, token=DefaultToken())
-
-        collection_dir = None
-        for child in root_path.joinpath(collection_adapter.ctx.config.collections_directory).iterdir():
-            if child.name == array_collection.name:
-                collection_dir = child
-
-        assert collection_dir is not None
-        collection_dir = os.listdir(collection_dir)
-        assert f"{array_collection.name}.json" in collection_dir
-        assert os.path.exists(array_collection.path.parent / (array_collection.name + ".lock"))
+        collection = varray_collection
+        collection.create()[:].update(1.0)
+        path = collection.path
+        (path / "stray.txt").write_text("x")
+        (path / "stray_dir").mkdir()
+        before = files_under(path)
+        config = collection_adapter.ctx.config
+        trash = collection_adapter.trash_resource
+        move = mocker.spy(deker_local_adapters.collection_adapter, "move_to_trash")
+        assert collection_adapter.clear(collection, background=False, _empty_trash=False, token=DefaultToken()) is None
+        moved = [call.args[0] for call in move.call_args_list]
+        assert moved[:4] == [
+            path / config.varray_symlinks_directory,
+            path / config.array_symlinks_directory,
+            path / config.varray_data_directory,
+            path / config.array_data_directory,
+        ]
+        assert sorted(moved[4:]) == [path / "stray.txt", path / "stray_dir"]
+        assert {call.args[1:] for call in move.call_args_list} == {(trash, collection_adapter.collections_resource)}
+        assert files_under(path) == [f"{collection.name}.json"]
+        assert len(list(trash.iterdir())) == 6
+        # the files of the moved directories, relative to them
+        assert sorted(name.partition(os.sep)[2] for name in files_under(trash) if os.sep in name) == sorted(
+            name.partition(os.sep)[2] for name in before if os.sep in name
+        )
+        collection_adapter.empty_trash(background=False)
+        assert list(trash.iterdir()) == []
 
     def test_collection_adapter_iter(self, client: Client, array_schema: ArraySchema, root_path: Path, ctx):
         for root, dirs, files in os.walk(root_path / ctx.config.collections_directory):
@@ -321,21 +385,101 @@ class TestCollectionAdapterClosed:
             ctx.is_closed = False
 
 
-class TestCollectionAdapterEdges:
-    def test_create_path_raises_if_directory_exists(self, collection_adapter: LocalCollectionAdapter):
-        name = "already-there"
-        path = collection_adapter._LocalCollectionAdapter__create_path(name)
-        try:
-            with pytest.raises(DekerCollectionAlreadyExistsError):
-                collection_adapter._LocalCollectionAdapter__create_path(name)
-        finally:
-            shutil.rmtree(path)
+class TakeAwayUnderTheLock:
+    """Stand for ``get_result`` of the collection lock: once the lock is taken, takes a directory away before the
+    creation reads the metadata file, as the deletion of the collection or the loss of the collections directory does.
 
-    def test_create_writes_nothing_into_a_missing_directory(
-        self, collection_adapter: LocalCollectionAdapter, root_path: Path
+    :param real: the real ``get_result``
+    :param directory: the directory to take away
+    :param target: where it goes
+    """
+
+    def __init__(self, real, directory: Path, target: Path) -> None:
+        self.real = real
+        self.directory = directory
+        self.target = target
+
+    def __call__(self, lock, *args, **kwargs):
+        self.directory.rename(self.target)
+        return self.real(lock, *args, **kwargs)
+
+
+class TestCollectionAdapterEdges:
+    @staticmethod
+    def collection_of(name: str, collection_adapter: LocalCollectionAdapter, client: Client, size: int) -> Collection:
+        """Make a collection object, not created.
+
+        :param name: name of the collection
+        :param collection_adapter: the collection adapter
+        :param client: client of the storage
+        :param size: size of its only dimension
+        :returns: the collection
+        """
+        schema = ArraySchema(dimensions=[DimensionSchema(name="x", size=size)], dtype=float)
+        return Collection(name, schema, collection_adapter, client._factory, HDF5StorageAdapter)
+
+    def test_existing_collection_is_not_created_again(
+        self, collection_adapter: LocalCollectionAdapter, client: Client, name: str
     ):
-        collection_adapter._LocalCollectionAdapter__create("ghost", {}, root_path / "ghost")
-        assert not list(root_path.rglob("ghost*"))
+        """Its json file is written: the second creator learns that the collection exists, the file stays."""
+        first = self.collection_of(name, collection_adapter, client, 2)
+        collection_adapter.create(first, timeout=Sentinel, token=DefaultToken())
+        try:
+            with pytest.raises(DekerCollectionAlreadyExistsError) as error:
+                collection_adapter.create(
+                    self.collection_of(name, collection_adapter, client, 3), timeout=Sentinel, token=DefaultToken()
+                )
+            assert str(error.value) == f"Collection {name} already exists"
+            assert collection_adapter.read(name) == json.loads(json.dumps(first.as_dict))
+        finally:
+            first.delete()
+
+    def test_empty_collection_file_is_written(
+        self, collection_adapter: LocalCollectionAdapter, client: Client, name: str
+    ):
+        """An empty json file is a creation that did not write it: the next creator writes it."""
+        directory = collection_adapter.collections_resource / name
+        directory.mkdir()
+        (directory / f"{name}.json").touch()
+        collection = self.collection_of(name, collection_adapter, client, 2)
+        try:
+            collection_adapter.create(collection, timeout=Sentinel, token=DefaultToken())
+            assert collection_adapter.read(name) == json.loads(json.dumps(collection.as_dict))
+        finally:
+            collection.delete()
+
+    @pytest.mark.parametrize(
+        "storage_gone", [pytest.param(True, id="collections gone"), pytest.param(False, id="collection deleted")]
+    )
+    def test_directory_gone_once_the_lock_is_taken(
+        self, own_client: Client, array_schema: ArraySchema, tmp_path: Path, mocker: MockerFixture, storage_gone: bool
+    ):
+        """The deletion comes after the creation: the creation returns, the collection does not exist; the loss of the
+        collections directory is critical.
+        """
+        adapter = own_client._adapter
+        directory = adapter.collections_resource if storage_gone else adapter.collections_resource / "own"
+        taker = TakeAwayUnderTheLock(CollectionLock.get_result, directory, tmp_path / "away")
+        mocker.patch.object(CollectionLock, "get_result", autospec=True, side_effect=taker)
+        collection = self.collection_of("own", adapter, own_client, 2)
+        create = partial(adapter.create, collection, timeout=Sentinel, token=DefaultToken())
+        check_not_found(create, Missing(adapter.collections_resource, storage_gone), None)
+        if not storage_gone:
+            assert not directory.exists()
+            assert (tmp_path / "away" / "own.json").read_text() == ""  # held, never written
+
+    def test_empty_collection_file_is_no_collection(self, collection_adapter: LocalCollectionAdapter, name: str):
+        """The json file of a collection being created is empty: the collection does not exist yet."""
+        directory = collection_adapter.collections_resource / name
+        directory.mkdir()
+        (directory / f"{name}.json").touch()
+        try:
+            with pytest.raises(DekerCollectionNotExistsError) as error:
+                collection_adapter.read(name)
+            assert str(error.value) == f"{name} collection doesn't exist"
+            assert name not in [meta["name"] for meta in collection_adapter]
+        finally:
+            shutil.rmtree(directory)
 
     def test_read_raises_for_missing_collection(self, collection_adapter: LocalCollectionAdapter):
         with pytest.raises(DekerCollectionNotExistsError):
@@ -377,9 +521,10 @@ class TestCollectionAdapterCancellation:
         token = SimpleToken()
         token.cancel()
         with pytest.raises(TokenCancelledError):
-            getattr(collection_adapter, operation)(array_collection, timeout=Sentinel, token=token)
+            getattr(collection_adapter, operation)(array_collection, background=False, _empty_trash=True, token=token)
         assert array_collection.path.exists()
         assert [a.id for a in array_collection] == [array.id]
+        assert list(collection_adapter.trash_resource.iterdir()) == []
 
     def test_create_with_a_cancelled_token_creates_nothing(
         self, client: Client, collection_adapter, array_schema, name
@@ -398,14 +543,22 @@ class TestCollectionAdapterCancellation:
         assert not (collection_adapter.collections_resource / name).exists()
 
     @pytest.mark.timeout(10)
-    def test_clear_waits_for_the_collection_up_to_the_timeout(self, array_collection: Collection, collection_adapter):
-        array = array_collection.create()
-        with Flock(collection_adapter.collections_resource / (array_collection.name + ".lock")):
+    @pytest.mark.parametrize("operation", ["clear", "delete"])
+    def test_held_collection_lock_does_not_stop_the_clearing_and_the_deletion(
+        self, array_collection: Collection, collection_adapter, operation
+    ):
+        """The lock of the collection, its metadata file held by a creation of the name, is not waited for."""
+        array_collection.create()
+        with Flock(array_collection.path / f"{array_collection.name}.json"):
             start = time.monotonic()
-            with pytest.raises(DekerLockError):
-                collection_adapter.clear(array_collection, timeout=1, token=DefaultToken())
-            assert time.monotonic() - start < 2.5
-        assert [a.id for a in array_collection] == [array.id]
+            getattr(collection_adapter, operation)(
+                array_collection, background=False, _empty_trash=True, token=DefaultToken()
+            )
+            assert time.monotonic() - start < 0.5
+        assert files_under(array_collection.path) == (
+            [] if operation == "delete" else [f"{array_collection.name}.json"]
+        )
+        assert list(collection_adapter.trash_resource.iterdir()) == []
 
 
 class MoveAwayOnOpen:
@@ -535,7 +688,9 @@ class TestStorageDirectories:
             pytest.param(lambda adapter, collection: adapter.read(collection.name), id="read"),
             pytest.param(lambda adapter, collection: adapter.is_deleted(collection), id="is_deleted"),
             pytest.param(
-                lambda adapter, collection: adapter.delete(collection, timeout=Sentinel, token=DefaultToken()),
+                lambda adapter, collection: adapter.delete(
+                    collection, background=False, _empty_trash=True, token=DefaultToken()
+                ),
                 id="delete",
             ),
             pytest.param(
@@ -543,7 +698,9 @@ class TestStorageDirectories:
                 id="create",
             ),
             pytest.param(
-                lambda adapter, collection: adapter.clear(collection, timeout=Sentinel, token=DefaultToken()),
+                lambda adapter, collection: adapter.clear(
+                    collection, background=False, _empty_trash=True, token=DefaultToken()
+                ),
                 id="clear",
             ),
         ],
@@ -572,15 +729,6 @@ class TestStorageDirectories:
             assert client._adapter.is_deleted(collection) is False
             shutil.rmtree(collection.path)
             assert client._adapter.is_deleted(collection) is True
-
-    def test_creation_of_a_collection_never_creates_the_collections_directory(
-        self, tmp_path: Path, collection_adapter: LocalCollectionAdapter, mocker: MockerFixture
-    ):
-        missing = tmp_path / "collections"
-        mocker.patch.object(LocalCollectionAdapter, "collections_resource", missing)
-        with pytest.raises(FileNotFoundError):
-            collection_adapter._LocalCollectionAdapter__create_path("new")
-        assert not missing.exists()
 
 
 class TestEmptyTrashDirectory:
@@ -915,3 +1063,148 @@ class TestIterationTellsAMissingStorageFromAMissingFile:
         mocker.patch("deker_local_adapters.collection_adapter.open", create=True, side_effect=missing)
         check_not_found(lambda: list(adapter), missing, [])
         gc.collect()
+
+    @pytest.mark.parametrize(
+        "storage_gone", [pytest.param(True, id="collections gone"), pytest.param(False, id="file gone")]
+    )
+    def test_collection_file_not_found_by_the_reading(
+        self, own_client: Client, array_schema: ArraySchema, mocker: MockerFixture, storage_gone: bool
+    ):
+        """The collection file is taken away as it is opened, by a deletion meanwhile: no collection."""
+        own_client.create_collection("own", array_schema)
+        adapter = own_client._adapter
+        missing = Missing(adapter.collections_resource, storage_gone)
+        mocker.patch("deker_local_adapters.collection_adapter.open", create=True, side_effect=missing)
+        check_not_found(partial(own_client.get_collection, "own"), missing, None)
+
+
+class TakeAwayAfterMoves:
+    """Stand for the move to the trash: after the given number of real moves, takes a directory away, as the deletion
+    of the collection or the loss of the collections directory of the storage meanwhile does.
+
+    :param real: the real move
+    :param moves: number of the moves after which the directory is taken away
+    :param directory: the directory to take away
+    :param target: where it goes
+    """
+
+    def __init__(self, real, moves: int, directory: Path, target: Path) -> None:
+        self.real = real
+        self.moves = moves
+        self.directory = directory
+        self.target = target
+        self.calls = 0
+
+    def __call__(self, *args, **kwargs) -> None:
+        self.real(*args, **kwargs)
+        self.calls += 1
+        if self.calls == self.moves:
+            self.directory.rename(self.target)
+
+
+class CreateAfterTheMove:
+    """Stand for the move to the trash: after the move of the named directory, a creator makes an array in the
+    collection, once, in the thread of the clearing.
+
+    :param real: the real move
+    :param name: name of the directory
+    :param collection: the collection
+    :param attributes: primary and custom attributes of the array
+    """
+
+    def __init__(self, real, name: str, collection: Collection, attributes: dict) -> None:
+        self.real = real
+        self.name = name
+        self.collection = collection
+        self.attributes = attributes
+        self.created = None
+
+    def __call__(self, path: Path, *args, **kwargs) -> None:
+        self.real(path, *args, **kwargs)
+        if path.name == self.name and self.created is None:
+            self.created = self.collection.create(**self.attributes)
+
+
+class TestClearingAgainstOthers:
+    """The clearing moves the inner directories of the collection one by one: what the others do between the moves."""
+
+    @pytest.mark.parametrize(
+        ("collection_", "directory"),
+        [
+            pytest.param("array_collection_with_attributes", "array_symlinks", id="array"),
+            pytest.param("varray_collection_with_attributes", "varray_symlinks", id="varray"),
+        ],
+    )
+    def test_symlink_made_between_the_moves_without_its_file_is_removed(
+        self, request, collection_adapter: LocalCollectionAdapter, mocker: MockerFixture, collection_: str, directory
+    ):
+        """A creator makes its file before the data directory is moved and its symlink after the symlinks directory
+        is: the symlink without its file is removed at the end, the array is found neither by its attributes nor by
+        its id.
+        """
+        collection: Collection = request.getfixturevalue(collection_)
+        attributes = {
+            "primary_attributes": {"primary_attribute": 3},
+            "custom_attributes": {"custom_attribute": 0.5, "time_attr_name": datetime.now(timezone.utc)},
+        }
+        creator = CreateAfterTheMove(
+            deker_local_adapters.collection_adapter.move_to_trash, directory, collection, attributes
+        )
+        mocker.patch.object(deker_local_adapters.collection_adapter, "move_to_trash", side_effect=creator)
+        assert collection_adapter.clear(collection, background=False, _empty_trash=False, token=DefaultToken()) is None
+        assert creator.created is not None
+        assert collection.filter({"primary_attribute": 3}).last() is None
+        assert files_under(collection.path) == [f"{collection.name}.json"]
+        assert collection.filter({"id": creator.created.id}).last() is None
+        name = creator.created.id + creator.created._adapter.file_ext
+        trash = collection_adapter.trash_resource
+        assert [path for path in files_under(trash) if path.endswith(name)] != []  # its file, moved with its directory
+        collection_adapter.empty_trash(background=False)
+        assert list(trash.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        ("collection_", "directory"),
+        [
+            pytest.param("array_collection_with_attributes", "array_data", id="array"),
+            pytest.param("varray_collection_with_attributes", "varray_data", id="varray"),
+        ],
+    )
+    def test_array_made_after_its_directories_are_moved_stays(
+        self, request, collection_adapter: LocalCollectionAdapter, mocker: MockerFixture, collection_: str, directory
+    ):
+        """A creator makes its file and its symlink after both their directories are moved: the array is whole and
+        stays, its symlink too.
+        """
+        collection: Collection = request.getfixturevalue(collection_)
+        attributes = {
+            "primary_attributes": {"primary_attribute": 3},
+            "custom_attributes": {"custom_attribute": 0.5, "time_attr_name": datetime.now(timezone.utc)},
+        }
+        creator = CreateAfterTheMove(
+            deker_local_adapters.collection_adapter.move_to_trash, directory, collection, attributes
+        )
+        mocker.patch.object(deker_local_adapters.collection_adapter, "move_to_trash", side_effect=creator)
+        assert collection_adapter.clear(collection, background=False, _empty_trash=True, token=DefaultToken()) is None
+        assert collection.filter({"primary_attribute": 3}).last().id == creator.created.id
+        assert len(files_under(collection.path)) == 3  # the metadata of the collection, the file and the symlink
+
+    @pytest.mark.parametrize(
+        "storage_gone", [pytest.param(True, id="collections gone"), pytest.param(False, id="collection deleted")]
+    )
+    def test_collection_taken_away_after_the_moves(
+        self, own_client: Client, array_schema: ArraySchema, tmp_path: Path, mocker: MockerFixture, storage_gone: bool
+    ):
+        """The deletion of the collection after the moves leaves nothing else to move: not an error; the loss of the
+        collections directory is critical.
+        """
+        collection = own_client.create_collection("own", array_schema)
+        collection.create()
+        adapter = own_client._adapter
+        directory = adapter.collections_resource if storage_gone else collection.path
+        taker = TakeAwayAfterMoves(
+            deker_local_adapters.collection_adapter.move_to_trash, 4, directory, tmp_path / "away"
+        )
+        mocker.patch.object(deker_local_adapters.collection_adapter, "move_to_trash", side_effect=taker)
+        clear = partial(adapter.clear, collection, background=False, _empty_trash=True, token=DefaultToken())
+        check_not_found(clear, Missing(adapter.collections_resource, storage_gone), None)
+        assert taker.calls == 4

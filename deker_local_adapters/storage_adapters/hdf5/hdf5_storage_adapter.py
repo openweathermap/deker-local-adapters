@@ -153,6 +153,8 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         :param array_shape: shape of the array
         :param metadata: array metadata
         :raises FileExistsError: if the file already exists
+        :raises FileNotFoundError: if the directory of the file is gone, also while HDF5 creates the file: a deletion
+          takes no lock, and HDF5 raises then an ``OSError`` without an errno
         """
         try:
             self.logger.debug("trying to create %s", path)
@@ -172,6 +174,11 @@ class HDF5StorageAdapter(SelfLoggerMixin, BaseStorageAdapter[HDF5Options]):
         except FileExistsError:
             self.logger.debug("%s already exists", path)
             raise
+        except OSError as e:
+            if not os.path.isdir(path.parent):
+                raise FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path.parent)) from e
+            self.logger.exception(e)
+            raise e
         except Exception as e:
             self.logger.exception(e)
             raise e

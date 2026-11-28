@@ -857,15 +857,6 @@ class Trash:
             return
         self.moved.append((path, target))
 
-    def clear_collection(self, collection: Path) -> None:
-        """Move every inner directory of the collection here, one rename each, as the clearing does.
-
-        :param collection: directory of the collection
-        """
-        for name in sorted(os.listdir(collection)):
-            if (collection / name).is_dir():
-                self.move(collection / name)
-
     def put_back(self, path: Path) -> None:
         """Put what was moved from the path back, for the fixtures; whatever was made at the path meanwhile comes here.
 
@@ -911,6 +902,28 @@ def gone_path(gone: str, array: Array | VArray) -> Path:
     return paths[gone]
 
 
+def moved_files(array: Array | VArray, created: tuple[str, ...]) -> list[str]:
+    """List the files of a (V)Array the clearing moves, relative to the inner directory of the collection they lie in.
+
+    :param array: the (V)Array
+    :param created: what of the (V)Array is there: ``main``, ``symlink``
+    :returns: sorted relative paths
+    """
+    collection = array._adapter.collection_path
+    main, symlink = created_paths(array)
+    paths = {"main": main, "symlink": symlink}
+    return sorted(str(paths[name].relative_to(collection)).partition(os.sep)[2] for name in created)
+
+
+def trash_of(adapter: LocalArrayAdapter | LocalVArrayAdapter) -> Path:
+    """Find the trash of the storage of an adapter.
+
+    :param adapter: the adapter
+    :returns: the trash
+    """
+    return adapter.trash_resource
+
+
 def creation_files(array: Array | VArray, created: tuple[str, ...]) -> list[str]:
     """List the files of a collection with a (V)Array being created, relative to the collection.
 
@@ -926,7 +939,10 @@ def creation_files(array: Array | VArray, created: tuple[str, ...]) -> list[str]
 
 @pytest.mark.parametrize("array_", CREATORS)
 class TestCreatorMeetsTheDeletionOfTheCollection:
-    """Wherever the deletion of the collection comes, nothing of the creator stays among the collections."""
+    """Wherever the deletion of the collection comes, nothing of the creator stays among the collections.
+
+    The deletion runs at the point of the creator, in its thread: it takes no lock, so nothing waits.
+    """
 
     @pytest.mark.parametrize(
         ("point", "gone", "moved"),
@@ -942,54 +958,58 @@ class TestCreatorMeetsTheDeletionOfTheCollection:
         ],
     )
     def test_creator_never_makes_the_collection_again(
-        self, array_: str, point: str, gone: str | None, moved: tuple[str, ...], request, tmp_path, mocker
+        self, array_: str, point: str, gone: str | None, moved: tuple[str, ...], request, mocker
     ):
         array = request.getfixturevalue(array_)
         adapter = array._adapter
         collection = adapter.collection_path
-        trash = Trash(tmp_path / "trash")
-        hook = At(point, trash.move, collection)
+        trash = trash_of(adapter)
+        assert list(trash.iterdir()) == []
+        hook = At(point, partial(array._collection.delete, _empty_trash=False))
         watch_creator(mocker, array, hook)
-        try:
-            if gone is None:
-                assert adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
-            else:
-                with pytest.raises(DekerInstanceNotExistsError) as error:
-                    adapter.create(array, timeout=Sentinel, token=DefaultToken())
-                assert str(error.value) == f"{gone_path(gone, array)} doesn't exist"
-            assert hook.done
-            assert not collection.exists()
-            (hidden,) = os.listdir(trash.directory)
-            assert files(trash.directory / hidden) == creation_files(array, moved)
-        finally:
-            trash.put_back(collection)
+        if gone is None:
+            assert adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
+        else:
+            with pytest.raises(DekerInstanceNotExistsError) as error:
+                adapter.create(array, timeout=Sentinel, token=DefaultToken())
+            assert str(error.value) == f"{gone_path(gone, array)} doesn't exist"
+        assert hook.done
+        assert not collection.exists()
+        (hidden,) = trash.iterdir()  # the directory of the collection, nothing else
+        assert files(hidden) == creation_files(array, moved)
+        adapter.empty_trash(background=False)
+        assert list(trash.iterdir()) == []
 
 
 class TestCreatorMeetsTheClearingOfTheCollection:
-    """A clearing that moves all the inner directories at one point leaves the collection whole, without leftovers."""
+    """Wherever the clearing of the collection comes, the collection stays whole, without leftovers.
+
+    The clearing runs at the point of the creator, in its thread: it takes no lock, so nothing waits.
+    """
 
     @pytest.mark.parametrize(
-        ("point", "gone", "kept"),
+        ("point", "gone", "kept", "moved"),
         [
-            (BEFORE_FIRST_DIRECTORY, None, ("main", "symlink")),
-            (BETWEEN_DIRECTORY_LEVELS, "data directory", ()),
-            (BEFORE_SYMLINK_DIRECTORIES, "main directory", ()),
-            (BEFORE_MAIN_FILE, "main directory", ()),
-            (WHILE_MAIN_FILE_IS_WRITTEN, "symlink directory", ()),
-            (BEFORE_SYMLINK, "symlink directory", ()),
-            (BEFORE_CHECK, "main file", ()),
-            (AFTER_CHECK, None, ()),
+            (BEFORE_FIRST_DIRECTORY, None, ("main", "symlink"), ()),
+            (BETWEEN_DIRECTORY_LEVELS, "data directory", (), ()),
+            (BEFORE_SYMLINK_DIRECTORIES, "main directory", (), ()),
+            (BEFORE_MAIN_FILE, "main directory", (), ()),
+            (WHILE_MAIN_FILE_IS_WRITTEN, "symlink directory", (), ("main",)),
+            (BEFORE_SYMLINK, "symlink directory", (), ("main",)),
+            (BEFORE_CHECK, "main file", (), ("main", "symlink")),
+            (AFTER_CHECK, None, (), ("main", "symlink")),
         ],
     )
     def test_creator_leaves_no_orphan(
-        self, array: Array, point: str, gone: str | None, kept: tuple[str, ...], tmp_path, mocker
+        self, array: Array, point: str, gone: str | None, kept: tuple[str, ...], moved: tuple[str, ...], mocker
     ):
         adapter = array._adapter
         collection = adapter.collection_path
+        trash = trash_of(adapter)
+        assert list(trash.iterdir()) == []
         old = Array(array._Array__collection, adapter)
         adapter.create(old, timeout=Sentinel, token=DefaultToken())
-        trash = Trash(tmp_path / "trash")
-        hook = At(point, trash.clear_collection, collection)
+        hook = At(point, partial(array._collection.clear, _empty_trash=False))
         watch_creator(mocker, array, hook)
         if gone is None:
             assert adapter.create(array, timeout=Sentinel, token=DefaultToken()) is array
@@ -999,8 +1019,31 @@ class TestCreatorMeetsTheClearingOfTheCollection:
             assert str(error.value) == f"{gone_path(gone, array)} doesn't exist"
         assert hook.done
         assert files(collection) == creation_files(array, kept)
-        # the old Array is moved away with the clearing: its main file and its symlink
-        assert sum(name.endswith(old.id + adapter.file_ext) for name in files(trash.directory)) == 2
+        # the old Array and what the creator made by the point, nothing else
+        moved_now = sorted(name.partition(os.sep)[2] for name in files(trash))
+        assert moved_now == sorted([*moved_files(old, ("main", "symlink")), *moved_files(array, moved)])
+        adapter.empty_trash(background=False)
+        assert list(trash.iterdir()) == []
+
+
+class FailTheCreationOfTheFile:
+    """Stand for ``h5py.File`` of the storage adapter: the creation of the file fails as HDF5 fails when the directory
+    of the file is moved away meanwhile; the directory is moved first if asked.
+
+    :param directory: the directory of the file
+    :param target: where it goes; ``None`` - the directory stays
+    """
+
+    ERROR = "Unable to synchronously create file (can't retrieve stat info for file)"
+
+    def __init__(self, directory: Path, target: Path | None) -> None:
+        self.directory = directory
+        self.target = target
+
+    def __call__(self, *args, **kwargs):
+        if self.target is not None:
+            self.directory.rename(self.target)
+        raise OSError(self.ERROR)
 
 
 class TestCreatorChecksItsFiles:
@@ -1038,6 +1081,27 @@ class TestCreatorChecksItsFiles:
         root = adapter.collection_path / adapter.symlinks_dir
         assert (symlink.parent == root) is (not array.primary_attributes)
         unlink.assert_not_called()
+
+    @pytest.mark.parametrize("moved", [True, False], ids=["directory moved", "directory in place"])
+    def test_file_whose_directory_is_moved_while_hdf5_creates_it(self, array: Array, tmp_path, mocker, moved: bool):
+        """HDF5 fails to create the file when its directory is moved meanwhile: the array does not exist. The same
+        failure with the directory in place is raised as it is.
+        """
+        adapter = array._adapter
+        main, symlink = created_paths(array)
+        failure = FailTheCreationOfTheFile(main.parent, tmp_path / "away" if moved else None)
+        mocker.patch("deker_local_adapters.storage_adapters.hdf5.hdf5_storage_adapter.h5py.File", side_effect=failure)
+        if moved:
+            with pytest.raises(DekerInstanceNotExistsError) as error:
+                adapter.create(array, timeout=Sentinel, token=DefaultToken())
+            assert str(error.value) == f"{main.parent} doesn't exist"
+        else:
+            with pytest.raises(OSError) as raised:
+                adapter.create(array, timeout=Sentinel, token=DefaultToken())
+            assert type(raised.value) is OSError
+            assert str(raised.value) == FailTheCreationOfTheFile.ERROR
+        assert not os.path.lexists(main)
+        assert not os.path.lexists(symlink)
 
     def test_symlink_directory_gone_before_its_lock_is_not_existing(
         self, local_array_adapter: LocalArrayAdapter, tmp_path
